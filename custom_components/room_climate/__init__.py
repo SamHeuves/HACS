@@ -492,7 +492,8 @@ class RoomClimateCoordinator:
             await self._heat_all_trvs(boost=self._boost_active)
             if self.has_ac:
                 if self._boost_active:
-                    await self._ac_set(HVACMode.HEAT, self._target_temp)
+                    # Drive AC at boost setpoint so it heats aggressively (same as TRVs)
+                    await self._ac_set(HVACMode.HEAT, BOOST_SETPOINT)
                 else:
                     await self._ac_off()
 
@@ -523,6 +524,10 @@ class RoomClimateCoordinator:
 
         if entity_id == self.window_sensor:
             self._handle_window_change(new_state)
+        elif entity_id == self.ac_entity:
+            # AC state changes (from our own commands or external changes) only update
+            # the master entity state — they must NOT trigger TRV recalibration.
+            self._notify_entities()
         else:
             if (
                 self._hvac_mode == HVACMode.HEAT
@@ -649,27 +654,22 @@ class RoomClimateCoordinator:
             "%s: AC set → %s mode=%s temp=%.1f", self.name, self.ac_entity, mode, temperature
         )
         try:
-            await self.hass.services.async_call(
-                "climate",
-                "set_hvac_mode",
-                {"entity_id": self.ac_entity, "hvac_mode": mode},
-            )
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Failed to set %s hvac_mode to %s: %s",
-                self.ac_entity, mode, err,
-            )
-            return
-        try:
+            # Single atomic call: many AC integrations (Tado, Sensibo, etc.) handle
+            # hvac_mode + temperature together correctly, avoiding a two-step race
+            # where set_hvac_mode resets the temperature to the AC's cloud default.
             await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
-                {"entity_id": self.ac_entity, "temperature": temperature},
+                {
+                    "entity_id": self.ac_entity,
+                    "hvac_mode": mode,
+                    "temperature": temperature,
+                },
             )
         except HomeAssistantError as err:
             _LOGGER.warning(
-                "Failed to set %s temperature to %.1f: %s",
-                self.ac_entity, temperature, err,
+                "Failed to set %s to %s at %.1f: %s",
+                self.ac_entity, mode, temperature, err,
             )
             return
         await self._ac_set_fan_mode()
