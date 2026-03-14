@@ -92,17 +92,15 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             )
             boost = last_state.attributes.get("boost_active", False)
             preset = last_state.attributes.get("preset_mode")
+            if preset not in PRESET_MODES:
+                preset = None
             fan = last_state.attributes.get("fan_mode", FAN_AUTO)
-            comfort = float(
-                last_state.attributes.get("comfort_temp", target_temp)
-            )
             self._coordinator.restore_state(
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
                 boost=boost,
                 preset=preset,
                 fan_mode=fan,
-                comfort_temp=comfort,
             )
             _LOGGER.debug(
                 "%s: restored state hvac=%s temp=%.1f preset=%s fan=%s",
@@ -242,7 +240,8 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             "window_blocked": self._coordinator.window_blocked,
             "calibration_mode": self._coordinator.calibration_mode,
             "has_ac": self._coordinator.has_ac,
-            "comfort_temp": self._coordinator.comfort_temp,
+            "comfort_temp": self._coordinator.comfort_config,
+            "eco_temp": self._coordinator.eco_config,
         }
         if self._coordinator.hvac_mode == HVACMode.HEAT_COOL:
             attrs["auto_submode"] = self._coordinator.auto_submode

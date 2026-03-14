@@ -24,16 +24,16 @@ from .const import (
     CALIBRATION_AGGRESSIVE,
     CONF_AC_ENTITY,
     CONF_ADDITIONAL_TRVS,
-    CONF_AWAY_TEMP,
     CONF_CALIBRATION_MODE,
-    CONF_ECO_TEMP_OFFSET,
+    CONF_COMFORT_TEMP,
+    CONF_ECO_TEMP,
     CONF_TADO_ENTITY,
     CONF_TEMP_SENSOR,
     CONF_WINDOW_CLOSE_DELAY,
     CONF_WINDOW_OPEN_DELAY,
     CONF_WINDOW_SENSOR,
-    DEFAULT_AWAY_TEMP,
-    DEFAULT_ECO_OFFSET,
+    DEFAULT_COMFORT_TEMP,
+    DEFAULT_ECO_TEMP,
     DEFAULT_MIN_TEMP,
     DEFAULT_TARGET_TEMP,
     DEFAULT_WINDOW_CLOSE_DELAY,
@@ -41,8 +41,6 @@ from .const import (
     DOMAIN,
     DRY_MODE_TEMP,
     FAN_AUTO,
-    PRESET_AWAY,
-    PRESET_BOOST,
     PRESET_COMFORT,
     PRESET_ECO,
 )
@@ -111,17 +109,16 @@ class RoomClimateCoordinator:
         self.window_close_delay: int = int(
             config.get(CONF_WINDOW_CLOSE_DELAY, DEFAULT_WINDOW_CLOSE_DELAY)
         )
-        self._eco_offset: float = float(
-            config.get(CONF_ECO_TEMP_OFFSET, DEFAULT_ECO_OFFSET)
+        self._comfort_config: float = float(
+            config.get(CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP)
         )
-        self._away_temp: float = float(
-            config.get(CONF_AWAY_TEMP, DEFAULT_AWAY_TEMP)
+        self._eco_config: float = float(
+            config.get(CONF_ECO_TEMP, DEFAULT_ECO_TEMP)
         )
 
         # Master state
         self._hvac_mode: str = HVACMode.OFF
         self._target_temp: float = DEFAULT_TARGET_TEMP
-        self._comfort_temp: float = DEFAULT_TARGET_TEMP
         self._boost_active: bool = False
         self._preset_mode: str | None = None
         self._fan_mode: str = FAN_AUTO
@@ -198,8 +195,14 @@ class RoomClimateCoordinator:
         return self._target_temp
 
     @property
-    def comfort_temp(self) -> float:
-        return self._comfort_temp
+    def comfort_config(self) -> float:
+        """Configured comfort temperature (fixed)."""
+        return self._comfort_config
+
+    @property
+    def eco_config(self) -> float:
+        """Configured eco temperature (fixed)."""
+        return self._eco_config
 
     @property
     def boost_active(self) -> bool:
@@ -336,9 +339,6 @@ class RoomClimateCoordinator:
         """Set a new HVAC mode."""
         if hvac_mode != HVACMode.HEAT and self._boost_active:
             self._boost_active = False
-            if self._preset_mode == PRESET_BOOST:
-                self._preset_mode = None
-                self._target_temp = self._comfort_temp
         if hvac_mode != HVACMode.HEAT_COOL:
             self._auto_submode = None
         self._hvac_mode = hvac_mode
@@ -349,7 +349,6 @@ class RoomClimateCoordinator:
     async def async_set_temperature(self, temperature: float) -> None:
         """Set a new target temperature (clears active preset)."""
         self._target_temp = temperature
-        self._comfort_temp = temperature
         self._preset_mode = None
         self._boost_active = False
         self._last_applied_setpoints.clear()
@@ -357,25 +356,13 @@ class RoomClimateCoordinator:
         self._notify_entities()
 
     async def async_set_preset_mode(self, preset: str | None) -> None:
-        """Activate a preset mode (comfort/eco/away/boost)."""
+        """Activate a preset mode (comfort or eco — fixed temperatures)."""
         self._preset_mode = preset
 
-        if preset == PRESET_BOOST:
-            self._boost_active = True
-            self._target_temp = self._comfort_temp
-            if self._hvac_mode != HVACMode.HEAT:
-                self._hvac_mode = HVACMode.HEAT
-        elif preset == PRESET_ECO:
-            self._boost_active = False
-            self._target_temp = max(
-                DEFAULT_MIN_TEMP, self._comfort_temp - self._eco_offset
-            )
-        elif preset == PRESET_AWAY:
-            self._boost_active = False
-            self._target_temp = self._away_temp
+        if preset == PRESET_ECO:
+            self._target_temp = self._eco_config
         else:  # comfort or None
-            self._boost_active = False
-            self._target_temp = self._comfort_temp
+            self._target_temp = self._comfort_config
 
         self._last_applied_setpoints.clear()
         await self._async_apply()
@@ -393,11 +380,13 @@ class RoomClimateCoordinator:
         self._notify_entities()
 
     async def async_set_boost(self, active: bool) -> None:
-        """Toggle boost via service call (convenience wrapper)."""
-        if active:
-            await self.async_set_preset_mode(PRESET_BOOST)
-        else:
-            await self.async_set_preset_mode(None)
+        """Toggle boost via service call (separate from presets)."""
+        self._boost_active = active
+        if active and self._hvac_mode != HVACMode.HEAT:
+            self._hvac_mode = HVACMode.HEAT
+        self._last_applied_setpoints.clear()
+        await self._async_apply()
+        self._notify_entities()
 
     # ------------------------------------------------------------------
     # Restore state after restart
@@ -411,7 +400,6 @@ class RoomClimateCoordinator:
         boost: bool,
         preset: str | None,
         fan_mode: str,
-        comfort_temp: float,
     ) -> None:
         """Called by the climate entity after it restores its last state."""
         self._hvac_mode = hvac_mode
@@ -419,7 +407,6 @@ class RoomClimateCoordinator:
         self._boost_active = boost
         self._preset_mode = preset
         self._fan_mode = fan_mode or FAN_AUTO
-        self._comfort_temp = comfort_temp
 
     # ------------------------------------------------------------------
     # Apply current state to physical devices

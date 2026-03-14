@@ -21,7 +21,8 @@ async def async_get_config_entry_diagnostics(
         "state": {
             "hvac_mode": coordinator.hvac_mode,
             "target_temp": coordinator.target_temp,
-            "comfort_temp": coordinator.comfort_temp,
+            "comfort_temp": coordinator.comfort_config,
+            "eco_temp": coordinator.eco_config,
             "current_temp": coordinator.current_temp,
             "preset_mode": coordinator.preset_mode,
             "fan_mode": coordinator.fan_mode,

@@ -10,7 +10,7 @@ A Home Assistant custom integration that unifies **one or more TRVs** (Thermosta
 | **Multi-TRV Support** | Rooms with multiple radiators — each TRV gets an individually calibrated setpoint |
 | **Offset Calibration** | External temperature sensor corrects TRV sensor drift for accurate room temperature |
 | **Auto Mode** | Automatically switches between heating and cooling based on temperature with deadband hysteresis |
-| **Preset Modes** | Comfort, Eco, Away, and Boost presets — combine with automations for scheduling |
+| **Preset Modes** | Comfort and Eco presets (fixed temperatures) — combine with automations for scheduling |
 | **Fan Speed Control** | Reads available fan modes from the AC entity and lets you control them from the master entity |
 | **Boost Mode** | Drives all TRV valves fully open and engages the AC for rapid warm-up |
 | **Window Detection** | Pauses all HVAC when a window opens, restores when it closes (configurable debounce) |
@@ -62,12 +62,12 @@ Each TRV is individually calibrated based on its own sensor reading.
 
 | Preset | Behavior |
 |--------|----------|
-| **Comfort** | Uses your manually set target temperature |
-| **Eco** | Reduces target by a configurable offset (default 3 °C) |
-| **Away** | Sets a fixed low temperature (default 15 °C) |
-| **Boost** | Drives TRVs to max, engages AC in heat — auto-switches to heat mode |
+| **Comfort** | Fixed temperature set in config (default 20 °C) |
+| **Eco** | Fixed temperature set in config (default 17 °C) |
 
-Presets are the recommended way to implement **scheduling**: create HA automations that switch presets at specific times (e.g., Eco at night, Comfort in the morning, Away when nobody's home).
+Presets are the recommended way to implement **scheduling**: create HA automations that switch presets at specific times (e.g., Eco at night, Comfort in the morning).
+
+**Boost** is a separate setting (not a preset): use the `room_climate.enable_boost` / `room_climate.disable_boost` services to open TRVs fully and engage the AC for rapid warm-up when in Heat mode.
 
 ## Installation
 
@@ -95,7 +95,7 @@ The integration uses a guided multi-step config flow:
 2. **Optional Devices** — Add an AC unit, external temperature sensor, and/or additional TRVs
 3. **Window Sensor** — Add a window sensor with configurable open/close debounce delays
 4. **Calibration** — Choose Normal or Aggressive mode (only shown when a temp sensor is configured)
-5. **Presets** — Configure Eco temperature reduction and Away temperature
+5. **Presets** — Set fixed Comfort and Eco temperatures
 
 All settings can be changed later via **Configure** on the integration card.
 
@@ -127,7 +127,8 @@ The master climate entity exposes these extra attributes for dashboards and temp
 | `window_blocked` | bool | Whether HVAC is paused due to an open window |
 | `calibration_mode` | string | Current calibration mode |
 | `has_ac` | bool | Whether an AC unit is configured |
-| `comfort_temp` | float | The base comfort temperature (before preset adjustments) |
+| `comfort_temp` | float | Configured comfort preset temperature |
+| `eco_temp` | float | Configured eco preset temperature |
 | `auto_submode` | string | Current auto action: `heating`, `cooling`, or `null` (only in auto mode) |
 | `trv_count` | int | Number of TRVs (only shown when > 1) |
 
@@ -136,7 +137,7 @@ The master climate entity exposes these extra attributes for dashboards and temp
 The HA thermostat card works beautifully out of the box with this integration:
 
 - **HVAC Action colors** — The card automatically shows orange for heating, blue for cooling, and grey for idle based on the `hvac_action` attribute
-- **Preset chips** — All four presets (Comfort, Eco, Away, Boost) appear as selectable options
+- **Preset chips** — Comfort and Eco presets appear as selectable options; use services for Boost
 - **Fan mode** — When AC is configured, a fan mode dropdown appears
 - **Auto mode** — Select "Heat/Cool" to let the system automatically switch between heating and cooling
 

@@ -36,10 +36,10 @@
       },
       "presets": {
         "title": "Presets",
-        "description": "Configure preset temperatures. Combine presets with HA automations for time-based scheduling (e.g. switch to Eco at night, Comfort in the morning).",
+        "description": "Set the fixed temperatures for Comfort and Eco presets. Combine presets with HA automations for time-based scheduling (e.g. switch to Eco at night, Comfort in the morning).",
         "data": {
-          "eco_temp_offset": "Eco mode reduction (below comfort)",
-          "away_temp": "Away mode temperature"
+          "comfort_temp": "Comfort temperature",
+          "eco_temp": "Eco temperature"
         }
       }
     },
@@ -78,8 +78,8 @@
         "title": "Presets",
         "description": "Update preset temperature settings.",
         "data": {
-          "eco_temp_offset": "Eco mode reduction (below comfort)",
-          "away_temp": "Away mode temperature"
+          "comfort_temp": "Comfort temperature",
+          "eco_temp": "Eco temperature"
         }
       }
     }

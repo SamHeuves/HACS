@@ -11,8 +11,8 @@ CONF_CALIBRATION_MODE = "calibration_mode"
 CONF_WINDOW_OPEN_DELAY = "window_open_delay"
 CONF_WINDOW_CLOSE_DELAY = "window_close_delay"
 CONF_ADDITIONAL_TRVS = "additional_trvs"
-CONF_ECO_TEMP_OFFSET = "eco_temp_offset"
-CONF_AWAY_TEMP = "away_temp"
+CONF_COMFORT_TEMP = "comfort_temp"
+CONF_ECO_TEMP = "eco_temp"
 
 # Calibration
 CALIBRATION_NORMAL = "normal"
@@ -37,16 +37,14 @@ DRY_MODE_TEMP = 16.0
 # Auto (heat_cool) deadband — prevents rapid switching between heat and cool
 AUTO_DEADBAND = 0.5
 
-# Preset defaults
-DEFAULT_ECO_OFFSET = 3.0
-DEFAULT_AWAY_TEMP = 15.0
+# Preset temperature defaults (fixed comfort/eco)
+DEFAULT_COMFORT_TEMP = 20.0
+DEFAULT_ECO_TEMP = 17.0
 
-# Preset mode names
+# Preset mode names (Comfort and Eco only; boost is a separate setting)
 PRESET_COMFORT = "comfort"
 PRESET_ECO = "eco"
-PRESET_AWAY = "away"
-PRESET_BOOST = "boost"
-PRESET_MODES = [PRESET_COMFORT, PRESET_ECO, PRESET_AWAY, PRESET_BOOST]
+PRESET_MODES = [PRESET_COMFORT, PRESET_ECO]
 
 # Fan mode fallback when AC doesn't report its own modes
 FAN_AUTO = "auto"

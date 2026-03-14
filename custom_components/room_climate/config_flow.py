@@ -14,16 +14,16 @@ from .const import (
     CALIBRATION_NORMAL,
     CONF_AC_ENTITY,
     CONF_ADDITIONAL_TRVS,
-    CONF_AWAY_TEMP,
     CONF_CALIBRATION_MODE,
-    CONF_ECO_TEMP_OFFSET,
+    CONF_COMFORT_TEMP,
+    CONF_ECO_TEMP,
     CONF_TADO_ENTITY,
     CONF_TEMP_SENSOR,
     CONF_WINDOW_CLOSE_DELAY,
     CONF_WINDOW_OPEN_DELAY,
     CONF_WINDOW_SENSOR,
-    DEFAULT_AWAY_TEMP,
-    DEFAULT_ECO_OFFSET,
+    DEFAULT_COMFORT_TEMP,
+    DEFAULT_ECO_TEMP,
     DEFAULT_WINDOW_CLOSE_DELAY,
     DEFAULT_WINDOW_OPEN_DELAY,
     DOMAIN,
@@ -143,7 +143,7 @@ class RoomClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         )
         return self.async_show_form(step_id="calibration", data_schema=schema)
 
-    # Step 5: Presets (eco offset + away temp)
+    # Step 5: Presets (fixed comfort and eco temperatures)
     async def async_step_presets(self, user_input=None):
         if user_input is not None:
             self._data.update(user_input)
@@ -152,18 +152,18 @@ class RoomClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Optional(
-                    CONF_ECO_TEMP_OFFSET, default=DEFAULT_ECO_OFFSET
+                    CONF_COMFORT_TEMP, default=DEFAULT_COMFORT_TEMP
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=1, max=10, step=0.5,
+                        min=0, max=30, step=0.5,
                         unit_of_measurement="°C", mode="slider",
                     )
                 ),
                 vol.Optional(
-                    CONF_AWAY_TEMP, default=DEFAULT_AWAY_TEMP
+                    CONF_ECO_TEMP, default=DEFAULT_ECO_TEMP
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=5, max=20, step=0.5,
+                        min=0, max=30, step=0.5,
                         unit_of_measurement="°C", mode="slider",
                     )
                 ),
@@ -325,22 +325,22 @@ class RoomClimateOptionsFlow(config_entries.OptionsFlow):
         schema = vol.Schema(
             {
                 vol.Optional(
-                    CONF_ECO_TEMP_OFFSET,
+                    CONF_COMFORT_TEMP,
                     default=self._data.get(
-                        CONF_ECO_TEMP_OFFSET, DEFAULT_ECO_OFFSET
+                        CONF_COMFORT_TEMP, DEFAULT_COMFORT_TEMP
                     ),
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=1, max=10, step=0.5,
+                        min=0, max=30, step=0.5,
                         unit_of_measurement="°C", mode="slider",
                     )
                 ),
                 vol.Optional(
-                    CONF_AWAY_TEMP,
-                    default=self._data.get(CONF_AWAY_TEMP, DEFAULT_AWAY_TEMP),
+                    CONF_ECO_TEMP,
+                    default=self._data.get(CONF_ECO_TEMP, DEFAULT_ECO_TEMP),
                 ): selector.NumberSelector(
                     selector.NumberSelectorConfig(
-                        min=5, max=20, step=0.5,
+                        min=0, max=30, step=0.5,
                         unit_of_measurement="°C", mode="slider",
                     )
                 ),
