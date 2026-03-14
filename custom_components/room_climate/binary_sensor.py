@@ -24,11 +24,10 @@ async def async_setup_entry(
 
 
 class RoomClimateWindowBlocked(BinarySensorEntity):
-    """
-    Binary sensor that is ON when the window is open and climate is blocked.
+    """Binary sensor that is ON when the window is open and climate is blocked.
 
-    Turns ON immediately when the window opens (before the debounce expires),
-    and turns OFF only after the close delay has passed and state is restored.
+    Turns ON only after the configured window-open delay has expired,
+    and turns OFF after the close delay has passed and state is restored.
     """
 
     _attr_has_entity_name = True

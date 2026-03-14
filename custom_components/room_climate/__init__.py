@@ -613,14 +613,6 @@ class RoomClimateCoordinator:
     # Device helpers — TRV
     # ------------------------------------------------------------------
 
-    async def _trv_off_one(self, entity_id: str) -> None:
-        try:
-            await self.hass.services.async_call(
-                "climate", "turn_off", {"entity_id": entity_id}
-            )
-        except HomeAssistantError as err:
-            _LOGGER.warning("Failed to turn off %s: %s", entity_id, err)
-
     async def _trv_heat_one(self, entity_id: str, setpoint: float) -> None:
         try:
             await self.hass.services.async_call(
@@ -642,33 +634,48 @@ class RoomClimateCoordinator:
     # ------------------------------------------------------------------
 
     async def _ac_off(self) -> None:
+        _LOGGER.debug("%s: AC off → %s", self.name, self.ac_entity)
         try:
             await self.hass.services.async_call(
-                "climate", "turn_off", {"entity_id": self.ac_entity}
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": self.ac_entity, "hvac_mode": HVACMode.OFF},
             )
         except HomeAssistantError as err:
-            _LOGGER.warning("Failed to turn off %s: %s", self.ac_entity, err)
+            _LOGGER.warning("Failed to turn off AC %s: %s", self.ac_entity, err)
 
     async def _ac_set(self, mode: str, temperature: float) -> None:
+        _LOGGER.debug(
+            "%s: AC set → %s mode=%s temp=%.1f", self.name, self.ac_entity, mode, temperature
+        )
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": self.ac_entity, "hvac_mode": mode},
+            )
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Failed to set %s hvac_mode to %s: %s",
+                self.ac_entity, mode, err,
+            )
+            return
         try:
             await self.hass.services.async_call(
                 "climate",
                 "set_temperature",
-                {
-                    "entity_id": self.ac_entity,
-                    "temperature": temperature,
-                    "hvac_mode": mode,
-                },
+                {"entity_id": self.ac_entity, "temperature": temperature},
             )
         except HomeAssistantError as err:
             _LOGGER.warning(
-                "Failed to set %s to %s at %.1f: %s",
-                self.ac_entity, mode, temperature, err,
+                "Failed to set %s temperature to %.1f: %s",
+                self.ac_entity, temperature, err,
             )
             return
         await self._ac_set_fan_mode()
 
     async def _ac_fan_only(self) -> None:
+        _LOGGER.debug("%s: AC fan_only → %s", self.name, self.ac_entity)
         try:
             await self.hass.services.async_call(
                 "climate",
@@ -686,6 +693,9 @@ class RoomClimateCoordinator:
         """Apply the selected fan mode to the AC."""
         if not self.has_ac:
             return
+        _LOGGER.debug(
+            "%s: AC fan_mode → %s fan=%s", self.name, self.ac_entity, self._fan_mode
+        )
         try:
             await self.hass.services.async_call(
                 "climate",

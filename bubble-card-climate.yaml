@@ -45,15 +45,15 @@ main_buttons_position: default
 main_buttons_full_width: false
 
 sub_button:
-  # ── Boost toggle (main row; only when heating) ─────────────
+  # ── Main row: Boost + Normal (only when heating; only colour changes) ──
   main:
-    # 1 — Boost toggle (enable when off, disable when on; auto-off when target reached)
+    # 1 — Boost (grey when off, orange when on; tap = enable)
     - icon: mdi:rocket-launch
       show_icon: true
       show_name: false
       tap_action:
         action: call-service
-        service: room_climate.toggle_boost
+        service: room_climate.enable_boost
         service_data:
           entity_id: climate.maite_3
       visibility:
@@ -61,7 +61,21 @@ sub_button:
           entity: climate.maite_3
           state: heat
 
-  # ── HVAC modes + Comfort/Eco (bottom row) ─────────────────
+    # 2 — Normal (always visible when heat; grey when boost off, highlighted when boost on; tap = disable boost)
+    - icon: mdi:radiator-off
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: room_climate.disable_boost
+        service_data:
+          entity_id: climate.maite_3
+      visibility:
+        - condition: state
+          entity: climate.maite_3
+          state: heat
+
+  # ── Bottom row: Off, Heat, Cool, Dry, Fan, Comfort, Eco ────
   bottom:
     # 3 — Off
     - icon: mdi:power
@@ -160,8 +174,8 @@ sub_button:
 # STYLES
 # ================================================================
 # Sub-button numbering:
-#   1=Boost toggle (main row; only when heat)
-#   3=Off  4=Heat  5=Cool  6=Dry  7=Fan  8=Comfort  9=Eco  (bottom — modes + presets with icon+text)
+#   1=Boost  2=Normal  (main row; only when heat; only colour changes)
+#   3=Off  4=Heat  5=Cool  6=Dry  7=Fan  8=Comfort  9=Eco  (bottom)
 # ================================================================
 styles: |-
   ${(()=>{
@@ -279,14 +293,23 @@ styles: |-
     } !important;
   }
 
-  /* ── MAIN ROW: Boost toggle ─────────────────────────────── */
-  /* 1 — Boost (deep orange when active, grey when off) */
+  /* ── MAIN ROW: Boost + Normal (only colour; grey when inactive) ── */
+  /* 1 — Boost (grey when off, orange when on) */
   .bubble-sub-button-1 {
     background: ${hass.states['climate.maite_3']?.attributes?.boost_active ? 'rgba(255,87,34,0.20)' : 'rgba(111,111,111,0.08)'} !important;
     border: ${hass.states['climate.maite_3']?.attributes?.boost_active ? '1px solid rgba(255,87,34,0.35)' : ''} !important;
   }
   .bubble-sub-button-1 ha-icon {
     color: ${hass.states['climate.maite_3']?.attributes?.boost_active ? '#FF5722' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 2 — Normal (grey when boost off, highlighted when boost on) */
+  .bubble-sub-button-2 {
+    background: ${hass.states['climate.maite_3']?.attributes?.boost_active ? 'rgba(120,144,156,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.maite_3']?.attributes?.boost_active ? '1px solid rgba(120,144,156,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-2 ha-icon {
+    color: ${hass.states['climate.maite_3']?.attributes?.boost_active ? '#78909C' : 'var(--disabled-text-color)'} !important;
   }
 
   /* ── BOTTOM ROW: HVAC modes (row 1) + Comfort/Eco 50% each (row 2) ── */

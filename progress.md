@@ -49,18 +49,27 @@ This file summarizes what has been done and agreed so far, so you can continue i
 
 - **Entity:** Card uses **`climate.maite_3`** (and `binary_sensor.maite_3_window_blocked` only in comments; overlay uses climate attribute).
 - **Layout:**
-  - **Main row:** Single **Boost toggle** button (only when state is heat). Tap calls **`room_climate.toggle_boost`** with `entity_id: climate.maite_3` to enable or disable boost.
-  - **Bottom row:** Off, Heat, Cool, Dry, Fan (no Auto), then **Comfort** and **Eco** with **icon + text** (`name: "Comfort"` / `"Eco"`, `show_name: true`).
+  - **Main row:** **Boost** (enable) + **Normal** (disable boost), both visible when state=heat. **Only colour changes** — grey when inactive, highlighted when boost is active.
+  - **Bottom row:** Off, Heat, Cool, Dry, Fan (row 1), then **Comfort** and **Eco** with **icon + text** on **row 2** (50% width each via CSS grid).
   - Comfort and Eco are on a **second line** of the bottom section: CSS grid (10 columns, 2 rows). When climate is **off**, Comfort and Eco buttons have **no color** (grey like others), even if preset is set.
 - **Card config:** `rows: 2.5` for the card itself.
 - **Overlay (“Window is open”):**
   - Condition: use **climate entity attribute** `window_blocked` (`s?.attributes?.window_blocked === true`), not the binary sensor entity (to avoid entity_id mismatches).
   - Append overlay to **`ha-card`** (or `card` fallback): `const host = card.querySelector('ha-card') || card; host.style.position = 'relative'; host.appendChild(overlay);` and higher z-index (999).
-- **Services:** **`room_climate.toggle_boost`** (single button); also **`room_climate.enable_boost`** / **`room_climate.disable_boost`** available. All take **`entity_id: climate.maite_3`** in service_data.
+- **Services:** **`room_climate.enable_boost`** / **`room_climate.disable_boost`** / **`room_climate.toggle_boost`**. All take `entity_id: climate.maite_3`.
 
 ### 7. TRV setpoint (explained)
 
 - **TRV setpoint** = the **calibrated temperature value** we send to the TRV (often higher than the room target because the TRV’s own sensor reads high). The integration computes it and exposes it via the “TRV setpoint” sensor for debugging.
+
+---
+
+### 8. AC fix and thorough review
+
+- **AC bug fix (critical):** `_ac_set()` was using `climate.set_temperature` with `hvac_mode` parameter in a single call. Many AC integrations ignore the `hvac_mode` parameter and only set temperature, leaving the AC off/unchanged. **Fixed:** now calls `climate.set_hvac_mode` first, then `climate.set_temperature` as separate service calls.
+- **AC off:** Changed from `climate.turn_off` to `climate.set_hvac_mode` with `HVACMode.OFF` for better compatibility.
+- **Debug logging:** All AC helper methods (`_ac_off`, `_ac_set`, `_ac_fan_only`, `_ac_set_fan_mode`) now log at DEBUG level, showing entity_id, mode, and temperature. Boost service calls also log. Enable debug logging for `custom_components.room_climate` in HA to see them.
+- **Cleanup:** Removed dead `_trv_off_one()` method (only `_off_all_trvs` is used). Fixed `binary_sensor.py` docstring. Updated `manifest.json` URLs to actual repo. Removed stale "auto modes" text from `strings.json` / `en.json`.
 
 ---
 
@@ -76,7 +85,8 @@ This file summarizes what has been done and agreed so far, so you can continue i
 
 | Topic | Where |
 |--------|--------|
-| Boost services (room_climate.enable_boost/disable_boost) | `__init__.py`: `_async_handle_boost_service`, registration in `async_setup_entry` |
+| Boost services (enable/disable/toggle) | `__init__.py`: `_async_handle_boost_service`, `async_handle_toggle_boost`, registration in `async_setup_entry` |
+| AC control (set_hvac_mode + set_temperature) | `__init__.py`: `_ac_set`, `_ac_off`, `_ac_fan_only`, `_ac_set_fan_mode` |
 | Window open delay → set blocked | `__init__.py`: `_handle_window_change` (no immediate `_window_blocked = True`), `_async_window_opened` (sets `_window_blocked = True`) |
 | Presets (comfort/eco fixed temps) | `const.py`: `CONF_COMFORT_TEMP`, `CONF_ECO_TEMP`, `PRESET_MODES`; `__init__.py`: `_comfort_config`/`_eco_config`, `async_set_preset_mode`; `config_flow.py`: presets step |
 | Climate state OFF when window blocked | `climate.py`: `hvac_mode` property returns `HVACMode.OFF` when `coordinator.window_blocked` |
