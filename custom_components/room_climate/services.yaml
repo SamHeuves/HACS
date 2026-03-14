@@ -17,3 +17,13 @@ disable_boost:
     entity:
       integration: room_climate
       domain: climate
+
+toggle_boost:
+  name: Toggle boost
+  description: >-
+    Toggles boost mode on or off. Use for a single button that enables
+    boost when off and disables it when on.
+  target:
+    entity:
+      integration: room_climate
+      domain: climate

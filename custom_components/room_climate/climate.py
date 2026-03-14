@@ -47,6 +47,9 @@ async def async_setup_entry(
     platform.async_register_entity_service(
         "disable_boost", {}, "async_disable_boost"
     )
+    platform.async_register_entity_service(
+        "toggle_boost", {}, "async_toggle_boost"
+    )
 
 
 class RoomClimateMaster(ClimateEntity, RestoreEntity):
@@ -273,3 +276,7 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
     async def async_disable_boost(self) -> None:
         """Disable boost mode — returns to normal calibrated operation."""
         await self._coordinator.async_set_boost(False)
+
+    async def async_toggle_boost(self) -> None:
+        """Toggle boost mode on or off."""
+        await self._coordinator.async_set_boost(not self._coordinator.boost_active)

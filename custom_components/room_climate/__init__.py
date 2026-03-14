@@ -60,12 +60,20 @@ async def _async_handle_boost_service(
     if isinstance(entity_ids, str):
         entity_ids = [entity_ids]
     for eid in entity_ids:
+        found = False
         for coordinator in hass.data.get(DOMAIN, {}).values():
             if not isinstance(coordinator, RoomClimateCoordinator):
                 continue
             if coordinator._climate_entity and coordinator._climate_entity.entity_id == eid:
+                found = True
+                _LOGGER.debug("%s: boost %s", eid, "on" if enable else "off")
                 await coordinator.async_set_boost(enable)
                 break
+        if not found:
+            _LOGGER.warning(
+                "room_climate boost service: no coordinator found for entity_id %s",
+                eid,
+            )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -84,6 +92,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async def async_handle_disable_boost(call: ServiceCall) -> None:
             await _async_handle_boost_service(hass, call, False)
 
+        async def async_handle_toggle_boost(call: ServiceCall) -> None:
+            """Toggle boost per entity: enable if off, disable if on."""
+            entity_ids = call.data.get(ATTR_ENTITY_ID)
+            if isinstance(entity_ids, str):
+                entity_ids = [entity_ids]
+            for eid in entity_ids:
+                for coordinator in hass.data.get(DOMAIN, {}).values():
+                    if not isinstance(coordinator, RoomClimateCoordinator):
+                        continue
+                    if coordinator._climate_entity and coordinator._climate_entity.entity_id == eid:
+                        enable = not coordinator.boost_active
+                        _LOGGER.debug("%s: boost toggle → %s", eid, "on" if enable else "off")
+                        await coordinator.async_set_boost(enable)
+                        break
+
         hass.services.async_register(
             DOMAIN,
             "enable_boost",
@@ -94,6 +117,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN,
             "disable_boost",
             async_handle_disable_boost,
+            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
+        )
+        hass.services.async_register(
+            DOMAIN,
+            "toggle_boost",
+            async_handle_toggle_boost,
             schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
         )
 
@@ -452,6 +481,7 @@ class RoomClimateCoordinator:
             return
 
         mode = self._hvac_mode
+        _LOGGER.debug("%s: apply mode=%s boost=%s has_ac=%s", self.name, mode, self._boost_active, self.has_ac)
 
         if mode == HVACMode.OFF:
             await self._off_all_trvs()
@@ -538,9 +568,6 @@ class RoomClimateCoordinator:
                 self._window_close_task.cancel()
                 self._window_close_task = None
 
-            self._window_blocked = True
-            self._notify_entities()
-
             if self._window_open_task:
                 self._window_open_task.cancel()
             self._window_open_task = self.hass.loop.call_later(
@@ -564,13 +591,14 @@ class RoomClimateCoordinator:
             )
 
     async def _async_window_opened(self) -> None:
-        """Debounce expired — window confirmed open. Turn off HVAC."""
+        """Debounce expired — window confirmed open. Set blocked and turn off HVAC."""
         self._window_open_task = None
+        self._window_blocked = True
         await self._off_all_trvs()
         if self.has_ac:
             await self._ac_off()
         self._notify_entities()
-        _LOGGER.debug("%s: window opened — HVAC paused", self.name)
+        _LOGGER.debug("%s: window opened — HVAC paused (after %s s)", self.name, self.window_open_delay)
 
     async def _async_window_closed(self) -> None:
         """Close delay expired — restore previous state."""
