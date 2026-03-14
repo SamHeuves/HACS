@@ -653,23 +653,31 @@ class RoomClimateCoordinator:
         _LOGGER.debug(
             "%s: AC set → %s mode=%s temp=%.1f", self.name, self.ac_entity, mode, temperature
         )
+        # Step 1: change mode (works universally with climate.set_hvac_mode)
         try:
-            # Single atomic call: many AC integrations (Tado, Sensibo, etc.) handle
-            # hvac_mode + temperature together correctly, avoiding a two-step race
-            # where set_hvac_mode resets the temperature to the AC's cloud default.
             await self.hass.services.async_call(
                 "climate",
-                "set_temperature",
-                {
-                    "entity_id": self.ac_entity,
-                    "hvac_mode": mode,
-                    "temperature": temperature,
-                },
+                "set_hvac_mode",
+                {"entity_id": self.ac_entity, "hvac_mode": mode},
             )
         except HomeAssistantError as err:
             _LOGGER.warning(
-                "Failed to set %s to %s at %.1f: %s",
-                self.ac_entity, mode, temperature, err,
+                "Failed to set %s hvac_mode to %s: %s",
+                self.ac_entity, mode, err,
+            )
+            return
+        # Step 2: set temperature (separate call; AC entity state changes from step 1
+        # are isolated to _notify_entities only, so no spurious re-apply can interfere)
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_temperature",
+                {"entity_id": self.ac_entity, "temperature": temperature},
+            )
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "Failed to set %s temperature to %.1f: %s",
+                self.ac_entity, temperature, err,
             )
             return
         await self._ac_set_fan_mode()
