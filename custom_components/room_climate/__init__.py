@@ -480,7 +480,10 @@ class RoomClimateCoordinator:
             return
 
         mode = self._hvac_mode
-        _LOGGER.debug("%s: apply mode=%s boost=%s has_ac=%s", self.name, mode, self._boost_active, self.has_ac)
+        _LOGGER.debug(
+            "%s: _async_apply mode=%s boost=%s has_ac=%s target_temp=%.1f",
+            self.name, mode, self._boost_active, self.has_ac, self._target_temp,
+        )
 
         if mode == HVACMode.OFF:
             await self._off_all_trvs()
@@ -639,65 +642,83 @@ class RoomClimateCoordinator:
     # ------------------------------------------------------------------
 
     async def _ac_off(self) -> None:
-        _LOGGER.debug("%s: AC off → %s", self.name, self.ac_entity)
+        _LOGGER.debug("%s: _ac_off → %s", self.name, self.ac_entity)
         try:
             await self.hass.services.async_call(
                 "climate",
                 "set_hvac_mode",
                 {"entity_id": self.ac_entity, "hvac_mode": HVACMode.OFF},
             )
-        except HomeAssistantError as err:
-            _LOGGER.warning("Failed to turn off AC %s: %s", self.ac_entity, err)
+            _LOGGER.debug("%s: _ac_off OK", self.name)
+        except Exception as err:
+            _LOGGER.error("%s: _ac_off FAILED: %s", self.ac_entity, err)
 
     async def _ac_set(self, mode: str, temperature: float) -> None:
-        _LOGGER.debug(
-            "%s: AC set → %s mode=%s temp=%.1f", self.name, self.ac_entity, mode, temperature
-        )
+        temp_int = round(temperature)
         ac_state = self.hass.states.get(self.ac_entity)
-        current_mode = ac_state.state if ac_state else None
+        ac_mode_before = ac_state.state if ac_state else "unknown"
+        ac_temp_before = (
+            ac_state.attributes.get("temperature") if ac_state else "unknown"
+        )
+        _LOGGER.debug(
+            "%s: _ac_set START → entity=%s desired_mode=%s desired_temp=%d "
+            "| AC before: mode=%s temp=%s",
+            self.name, self.ac_entity, mode, temp_int,
+            ac_mode_before, ac_temp_before,
+        )
 
-        if current_mode != mode:
-            # Mode needs to change.  Use Gree's native combined service call:
-            # climate.set_temperature with hvac_mode + temperature in one call keeps
-            # both changes inside the same entity coroutine, so Gree's raw_properties
-            # (the dict that backs every push_state_update) cannot be corrupted by a
-            # concurrent state-update between a separate set_hvac_mode and set_temperature.
-            try:
-                await self.hass.services.async_call(
-                    "climate",
-                    "set_temperature",
-                    {
-                        "entity_id": self.ac_entity,
-                        "hvac_mode": mode,
-                        "temperature": temperature,
-                    },
-                )
-            except HomeAssistantError as err:
-                _LOGGER.warning(
-                    "Failed to set %s mode=%s temp=%.1f: %s",
-                    self.ac_entity, mode, temperature, err,
-                )
-                return
-        else:
-            # Mode is already correct — skip the mode push entirely and only update
-            # temperature so we don't risk reverting the mode via a stale raw_properties
-            # snapshot inside a redundant set_hvac_mode push.
-            try:
-                await self.hass.services.async_call(
-                    "climate",
-                    "set_temperature",
-                    {"entity_id": self.ac_entity, "temperature": temperature},
-                )
-            except HomeAssistantError as err:
-                _LOGGER.warning(
-                    "Failed to set %s temperature to %.1f: %s",
-                    self.ac_entity, temperature, err,
-                )
-                return
+        # ── Step 1: set HVAC mode ──
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_hvac_mode",
+                {"entity_id": self.ac_entity, "hvac_mode": mode},
+            )
+            _LOGGER.debug("%s: _ac_set step 1 OK (set_hvac_mode=%s)", self.name, mode)
+        except Exception as err:
+            _LOGGER.error(
+                "%s: _ac_set step 1 FAILED (set_hvac_mode=%s): %s",
+                self.name, mode, err,
+            )
+            return
 
-        # Brief pause so Gree can commit the temperature push before the fan-speed push.
+        # Let the Gree device commit the mode-change UDP push before sending temp.
+        await asyncio.sleep(1.0)
+
+        # ── Step 2: set temperature ──
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_temperature",
+                {"entity_id": self.ac_entity, "temperature": temp_int},
+            )
+            _LOGGER.debug(
+                "%s: _ac_set step 2 OK (set_temperature=%d)", self.name, temp_int
+            )
+        except Exception as err:
+            _LOGGER.error(
+                "%s: _ac_set step 2 FAILED (set_temperature=%d): %s",
+                self.name, temp_int, err,
+            )
+            return
+
         await asyncio.sleep(0.5)
+
+        # ── Step 3: set fan mode ──
         await self._ac_set_fan_mode()
+
+        # ── Verify final AC state ──
+        ac_state_after = self.hass.states.get(self.ac_entity)
+        ac_mode_after = ac_state_after.state if ac_state_after else "unknown"
+        ac_temp_after = (
+            ac_state_after.attributes.get("temperature")
+            if ac_state_after
+            else "unknown"
+        )
+        _LOGGER.debug(
+            "%s: _ac_set DONE | AC after: mode=%s temp=%s",
+            self.name, ac_mode_after, ac_temp_after,
+        )
 
     async def _ac_fan_only(self) -> None:
         _LOGGER.debug("%s: AC fan_only → %s", self.name, self.ac_entity)
@@ -707,15 +728,13 @@ class RoomClimateCoordinator:
                 "set_hvac_mode",
                 {"entity_id": self.ac_entity, "hvac_mode": HVACMode.FAN_ONLY},
             )
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Failed to set %s to fan_only: %s", self.ac_entity, err
+            _LOGGER.debug("%s: _ac_fan_only set_hvac_mode OK", self.name)
+        except Exception as err:
+            _LOGGER.error(
+                "%s: _ac_fan_only set_hvac_mode FAILED: %s", self.name, err
             )
             return
-        # Same reasoning as _ac_set: Gree must commit the mode-change push before we
-        # send a fan-speed push, otherwise the second push carries the stale old mode
-        # in raw_properties and the device reverts back to the previous HVAC mode.
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
         await self._ac_set_fan_mode()
 
     async def _ac_set_fan_mode(self) -> None:
