@@ -699,6 +699,10 @@ class RoomClimateCoordinator:
                 "Failed to set %s to fan_only: %s", self.ac_entity, err
             )
             return
+        # Same reasoning as _ac_set: Gree must commit the mode-change push before we
+        # send a fan-speed push, otherwise the second push carries the stale old mode
+        # in raw_properties and the device reverts back to the previous HVAC mode.
+        await asyncio.sleep(0.5)
         await self._ac_set_fan_mode()
 
     async def _ac_set_fan_mode(self) -> None:
