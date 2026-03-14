@@ -1,0 +1,19 @@
+enable_boost:
+  name: Enable boost
+  description: >-
+    Activates boost mode — drives all TRV valves fully open and engages
+    the AC in heat mode for rapid warm-up. Automatically switches to heat mode.
+  target:
+    entity:
+      integration: room_climate
+      domain: climate
+
+disable_boost:
+  name: Disable boost
+  description: >-
+    Deactivates boost mode — returns to the previous comfort temperature
+    and normal calibrated operation.
+  target:
+    entity:
+      integration: room_climate
+      domain: climate

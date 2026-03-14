@@ -1,0 +1,61 @@
+---
+description: Room Climate HA integration — development conventions and architecture
+alwaysApply: true
+---
+
+# Room Climate Integration
+
+## Project Overview
+
+Home Assistant custom integration: virtual master climate entity per room.
+Coordinates one or more TRVs + optional AC with offset calibration, presets,
+fan control, auto heat/cool, window detection, and diagnostics.
+
+Integration files: `custom_components/room_climate/`
+
+## File Map
+
+| File | Purpose |
+|------|---------|
+| `__init__.py` | `RoomClimateCoordinator` — central state machine, mode routing, device calls |
+| `climate.py` | `RoomClimateMaster` — ClimateEntity + RestoreEntity, presets, fan mode, hvac_action |
+| `binary_sensor.py` | Window-blocked binary sensor |
+| `sensor.py` | Calibration offset + TRV setpoint sensor entities |
+| `diagnostics.py` | Diagnostic data export for HA diagnostics panel |
+| `config_flow.py` | Multi-step ConfigFlow + OptionsFlow |
+| `const.py` | All constants — no mode strings (use HVACMode enum) |
+| `services.yaml` | boost enable/disable service definitions |
+| `strings.json` + `translations/en.json` | Must stay in sync |
+| `manifest.json` | `iot_class: calculated`, version tracking |
+
+## Key Patterns
+
+- Config: `{**entry.data, **entry.options}` — options flow changes apply on reload
+- Multi-TRV: `all_trvs = [primary] + additional_trvs`, per-TRV calibration
+- Dedup: `_last_applied_setpoints` dict prevents redundant service calls
+- Recalibration: `_handle_state_change` → `_async_recalibrate()` on sensor updates
+- Auto mode: deadband ±0.5 °C around target, `_auto_submode` tracks heating/cooling
+- Presets: `_comfort_temp` stores base temp; presets derive `_target_temp` from it
+- Fan mode: read from AC entity's `fan_modes` attribute, apply via `set_fan_mode`
+- Error handling: all service calls wrapped in `try/except HomeAssistantError`
+- Window: `call_later` timers with configurable open/close delays
+
+## Coding Rules
+
+- `HVACMode` enum — never raw strings
+- All UI text in `strings.json` / `en.json` — never in Python
+- `translation_key` for select selector options
+- Options flow: `self.config_entry` (no constructor parameter)
+- Optional fields: `user_input.get(KEY)` so clearing sets `None`
+- New constants → `const.py`; new services → `services.yaml`
+
+## Testing Checklist
+
+- Per-TRV calibration with 1, 2, 3 TRVs
+- Auto mode: heat→cool→idle transitions with deadband
+- All four presets: comfort/eco/away/boost + manual temp clears preset
+- Fan mode passthrough to AC
+- Window debounce: rapid open/close sequences
+- Options flow: add/remove optional entities
+- State restoration after HA restart (all fields)
+- Diagnostics download

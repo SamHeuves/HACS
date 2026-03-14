@@ -1,0 +1,95 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Room setup",
+        "description": "Select the primary TRV (thermostatic radiator valve) that controls heating in this room.",
+        "data": {
+          "name": "Room name",
+          "tado_entity": "TRV climate entity"
+        }
+      },
+      "optional_devices": {
+        "title": "Optional devices",
+        "description": "Optionally add an AC unit (enables cool, dry, fan, auto modes), an external temperature sensor for offset calibration, and additional TRVs for rooms with multiple radiators.",
+        "data": {
+          "ac_entity": "AC unit",
+          "temp_sensor": "External temperature sensor",
+          "additional_trvs": "Additional TRV entities"
+        }
+      },
+      "window": {
+        "title": "Window sensor",
+        "description": "Optionally add a window sensor. When the window opens, all heating and cooling will be paused automatically.",
+        "data": {
+          "window_sensor": "Window sensor",
+          "window_open_delay": "Window open delay (seconds)",
+          "window_close_delay": "Window close delay (seconds)"
+        }
+      },
+      "calibration": {
+        "title": "Calibration",
+        "description": "Choose how the TRV setpoint offset is calculated relative to the external temperature sensor.",
+        "data": {
+          "calibration_mode": "Calibration mode"
+        }
+      },
+      "presets": {
+        "title": "Presets",
+        "description": "Configure preset temperatures. Combine presets with HA automations for time-based scheduling (e.g. switch to Eco at night, Comfort in the morning).",
+        "data": {
+          "eco_temp_offset": "Eco mode reduction (below comfort)",
+          "away_temp": "Away mode temperature"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This TRV entity is already configured in another room."
+    }
+  },
+  "options": {
+    "step": {
+      "optional_devices": {
+        "title": "Optional devices",
+        "description": "Update the optional devices for this room.",
+        "data": {
+          "ac_entity": "AC unit",
+          "temp_sensor": "External temperature sensor",
+          "additional_trvs": "Additional TRV entities"
+        }
+      },
+      "window": {
+        "title": "Window sensor",
+        "description": "Update the window sensor settings for this room.",
+        "data": {
+          "window_sensor": "Window sensor",
+          "window_open_delay": "Window open delay (seconds)",
+          "window_close_delay": "Window close delay (seconds)"
+        }
+      },
+      "calibration": {
+        "title": "Calibration",
+        "description": "Update the calibration mode for TRV offset calculation.",
+        "data": {
+          "calibration_mode": "Calibration mode"
+        }
+      },
+      "presets": {
+        "title": "Presets",
+        "description": "Update preset temperature settings.",
+        "data": {
+          "eco_temp_offset": "Eco mode reduction (below comfort)",
+          "away_temp": "Away mode temperature"
+        }
+      }
+    }
+  },
+  "selector": {
+    "calibration_mode": {
+      "options": {
+        "normal": "Normal — proportional offset",
+        "aggressive": "Aggressive — amplified offset (opens valve wider)"
+      }
+    }
+  }
+}

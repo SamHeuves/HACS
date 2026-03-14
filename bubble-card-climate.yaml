@@ -1,0 +1,397 @@
+# =================================================================
+# Room Climate — Bubble Card Template
+# =================================================================
+#
+# A polished climate card for the Room Climate integration.
+# Uses ONLY native integration entities — no input_boolean,
+# input_number, or other helpers needed.
+#
+# SETUP:
+#   1. Find-and-replace  bedroom  with your room entity name
+#      (e.g., living_room, office, nursery)
+#   2. Paste this YAML into a Manual Card on your HA dashboard
+#
+# ENTITIES USED (all created by the integration):
+#   climate.bedroom                        master climate entity
+#   binary_sensor.bedroom_window_blocked   window-open indicator
+#
+# REQUIRES:
+#   - Room Climate custom integration
+#   - Bubble Card (HACS → Frontend)
+#
+# NO-AC SETUP:
+#   If you don't have an AC configured, remove the bottom
+#   sub_buttons for Auto, Cool, Dry, Fan (indices 2-5) and
+#   delete .bubble-sub-button-7 through -10 from the styles.
+#   Renumber remaining bottom buttons starting at -5.
+# =================================================================
+
+type: custom:bubble-card
+card_type: climate
+entity: climate.bedroom
+name: Climate
+force_icon: true
+icon: mdi:home-thermometer
+state_color: false
+hide_temperature: false
+show_state: true
+show_attribute: false
+step: 0.5
+rows: "2"
+main_buttons_position: default
+main_buttons_full_width: false
+
+sub_button:
+  # ── Preset buttons (main row) ────────────────────────────
+  main:
+    # 1 — Comfort (resets to base comfort temperature)
+    - icon: mdi:home-heart
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_preset_mode
+        service_data:
+          entity_id: climate.bedroom
+          preset_mode: comfort
+      visibility:
+        - condition: always
+
+    # 2 — Eco (reduces target by configurable offset)
+    - icon: mdi:leaf
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_preset_mode
+        service_data:
+          entity_id: climate.bedroom
+          preset_mode: eco
+      visibility:
+        - condition: always
+
+    # 3 — Away (fixed low temperature)
+    - icon: mdi:home-export-outline
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_preset_mode
+        service_data:
+          entity_id: climate.bedroom
+          preset_mode: away
+      visibility:
+        - condition: always
+
+    # 4 — Boost (TRVs max + AC heat, auto-switches to heat)
+    - icon: mdi:rocket-launch
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_preset_mode
+        service_data:
+          entity_id: climate.bedroom
+          preset_mode: boost
+      visibility:
+        - condition: always
+
+  # ── HVAC mode buttons (bottom row) ──────────────────────
+  bottom:
+    # 5 — Off
+    - icon: mdi:power
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: "off"
+      visibility:
+        - condition: always
+
+    # 6 — Heat
+    - icon: mdi:fire
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: heat
+      visibility:
+        - condition: always
+
+    # 7 — Auto (heat/cool with deadband)
+    - icon: mdi:autorenew
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: heat_cool
+      visibility:
+        - condition: always
+
+    # 8 — Cool
+    - icon: mdi:snowflake
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: cool
+      visibility:
+        - condition: always
+
+    # 9 — Dry
+    - icon: mdi:water-percent
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: dry
+      visibility:
+        - condition: always
+
+    # 10 — Fan
+    - icon: mdi:fan
+      show_icon: true
+      show_name: false
+      tap_action:
+        action: call-service
+        service: climate.set_hvac_mode
+        service_data:
+          entity_id: climate.bedroom
+          hvac_mode: fan_only
+      visibility:
+        - condition: always
+
+# ================================================================
+# STYLES
+# ================================================================
+# Sub-button numbering:
+#   1=Comfort  2=Eco  3=Away  4=Boost  (main row — presets)
+#   5=Off  6=Heat  7=Auto  8=Cool  9=Dry  10=Fan  (bottom — modes)
+# ================================================================
+styles: |-
+  ${(()=>{
+    const s = hass.states['climate.bedroom'];
+    const mode   = s?.state;
+    const action = s?.attributes?.hvac_action;
+    const preset = s?.attributes?.preset_mode;
+    const win    = hass.states['binary_sensor.bedroom_window_blocked']?.state === 'on';
+
+    const iconMap     = { heating:'mdi:radiator', cooling:'mdi:snowflake', drying:'mdi:water-percent', fan:'mdi:fan' };
+    const modeIconMap = { heat:'mdi:fire', cool:'mdi:snowflake', dry:'mdi:water-percent', fan_only:'mdi:fan', heat_cool:'mdi:autorenew', off:'mdi:power' };
+    const modeColorMap = { heat:'#FF7043', cool:'#4FC3F7', dry:'#26C6DA', fan_only:'#90A4AE', heat_cool:'#66BB6A' };
+
+    icon.setAttribute('icon', iconMap[action] ?? modeIconMap[mode] ?? 'mdi:home-thermometer');
+    icon.style.setProperty('color', modeColorMap[mode] ?? 'var(--disabled-text-color)', 'important');
+
+    let overlay = card.querySelector('.window-overlay');
+    if (win) {
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'window-overlay';
+        overlay.style.cssText = 'position:absolute;inset:0;background:rgba(30,30,30,0.55);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);z-index:99;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;color:rgba(255,255,255,0.9);letter-spacing:0.3px;pointer-events:all;cursor:default;';
+        overlay.innerHTML = '🪟&nbsp; Window is open';
+        card.appendChild(overlay);
+      }
+    } else {
+      overlay?.remove();
+    }
+  })()}
+
+  /* ── Card shell ─────────────────────────────────────────── */
+  ha-card {
+    border-radius: 12px;
+    padding: 12px 14px;
+    box-shadow: var(--ha-card-box-shadow, none) !important;
+    min-height: 80px;
+    overflow: hidden;
+    position: relative;
+    transition: background 1s ease, border 1s ease;
+    pointer-events: ${hass.states['binary_sensor.bedroom_window_blocked']?.state === 'on' ? 'none' : 'all'} !important;
+    background: ${
+      hass.states['climate.bedroom']?.state === 'heat'      ? 'linear-gradient(135deg, rgba(255,112,67,0.09) 0%, rgba(255,112,67,0.03) 100%)' :
+      hass.states['climate.bedroom']?.state === 'cool'      ? 'linear-gradient(135deg, rgba(79,195,247,0.08) 0%, rgba(79,195,247,0.03) 100%)' :
+      hass.states['climate.bedroom']?.state === 'dry'       ? 'linear-gradient(135deg, rgba(38,198,218,0.08) 0%, rgba(38,198,218,0.03) 100%)' :
+      hass.states['climate.bedroom']?.state === 'fan_only'  ? 'linear-gradient(135deg, rgba(144,164,174,0.08) 0%, rgba(144,164,174,0.03) 100%)' :
+      hass.states['climate.bedroom']?.state === 'heat_cool' ? 'linear-gradient(135deg, rgba(102,187,106,0.08) 0%, rgba(102,187,106,0.03) 100%)' :
+      'var(--card-background-color)'
+    } !important;
+    border: ${
+      hass.states['climate.bedroom']?.state === 'heat'      ? '1px solid rgba(255,112,67,0.18)' :
+      hass.states['climate.bedroom']?.state === 'cool'      ? '1px solid rgba(79,195,247,0.18)' :
+      hass.states['climate.bedroom']?.state === 'dry'       ? '1px solid rgba(38,198,218,0.18)' :
+      hass.states['climate.bedroom']?.state === 'fan_only'  ? '1px solid rgba(144,164,174,0.18)' :
+      hass.states['climate.bedroom']?.state === 'heat_cool' ? '1px solid rgba(102,187,106,0.18)' :
+      '1px solid var(--divider-color)'
+    } !important;
+  }
+
+  /* ── Reset Bubble Card defaults ─────────────────────────── */
+  .bubble-icon-container { pointer-events: none !important; }
+  .window-overlay { pointer-events: all !important; }
+  .bubble-container, .bubble-climate-container {
+    background: none !important;
+    box-shadow: none !important;
+  }
+  .bubble-color-background { opacity: 0 !important; }
+
+  /* ── Main icon color (follows hvac_action) ──────────────── */
+  .bubble-icon-container ha-icon {
+    color: ${
+      hass.states['climate.bedroom']?.attributes?.hvac_action === 'heating' ? '#FF7043' :
+      hass.states['climate.bedroom']?.attributes?.hvac_action === 'cooling' ? '#4FC3F7' :
+      hass.states['climate.bedroom']?.attributes?.hvac_action === 'drying'  ? '#26C6DA' :
+      hass.states['climate.bedroom']?.attributes?.hvac_action === 'fan'     ? '#90A4AE' :
+      'var(--disabled-text-color)'
+    } !important;
+  }
+
+  /* ── Icon container border ──────────────────────────────── */
+  .bubble-icon-container {
+    border: ${
+      hass.states['climate.bedroom']?.state === 'heat'      ? '1px solid rgba(255,112,67,0.18)' :
+      hass.states['climate.bedroom']?.state === 'cool'      ? '1px solid rgba(79,195,247,0.18)' :
+      hass.states['climate.bedroom']?.state === 'dry'       ? '1px solid rgba(38,198,218,0.18)' :
+      hass.states['climate.bedroom']?.state === 'fan_only'  ? '1px solid rgba(144,164,174,0.18)' :
+      hass.states['climate.bedroom']?.state === 'heat_cool' ? '1px solid rgba(102,187,106,0.18)' :
+      '1px solid var(--divider-color)'
+    } !important;
+    border-radius: 50%;
+  }
+
+  /* ── Temperature slider ─────────────────────────────────── */
+  .bubble-temperature-container {
+    border: ${
+      hass.states['climate.bedroom']?.state === 'heat'      ? '1px solid rgba(255,112,67,0.18)' :
+      hass.states['climate.bedroom']?.state === 'cool'      ? '1px solid rgba(79,195,247,0.18)' :
+      hass.states['climate.bedroom']?.state === 'dry'       ? '1px solid rgba(38,198,218,0.18)' :
+      hass.states['climate.bedroom']?.state === 'fan_only'  ? '1px solid rgba(144,164,174,0.18)' :
+      hass.states['climate.bedroom']?.state === 'heat_cool' ? '1px solid rgba(102,187,106,0.18)' :
+      '1px solid var(--divider-color)'
+    } !important;
+    background: rgba(111,111,111,0.08) !important;
+    border-radius: var(--bubble-sub-button-border-radius, 18px);
+    opacity: ${ ['dry','fan_only'].includes(hass.states['climate.bedroom']?.state) ? '0.4' : '1' } !important;
+    pointer-events: ${ ['dry','fan_only'].includes(hass.states['climate.bedroom']?.state) ? 'none' : 'all' } !important;
+    filter: ${ ['dry','fan_only'].includes(hass.states['climate.bedroom']?.state) ? 'grayscale(60%)' : 'none' } !important;
+  }
+
+  /* ── Common sub-button border ───────────────────────────── */
+  .bubble-sub-button {
+    border: ${
+      hass.states['climate.bedroom']?.state === 'heat'      ? '1px solid rgba(255,112,67,0.18)' :
+      hass.states['climate.bedroom']?.state === 'cool'      ? '1px solid rgba(79,195,247,0.18)' :
+      hass.states['climate.bedroom']?.state === 'dry'       ? '1px solid rgba(38,198,218,0.18)' :
+      hass.states['climate.bedroom']?.state === 'fan_only'  ? '1px solid rgba(144,164,174,0.18)' :
+      hass.states['climate.bedroom']?.state === 'heat_cool' ? '1px solid rgba(102,187,106,0.18)' :
+      '1px solid var(--divider-color)'
+    } !important;
+  }
+
+  /* ── PRESET BUTTONS (main row) ──────────────────────────── */
+
+  /* 1 — Comfort (amber) */
+  .bubble-sub-button-1 {
+    background: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'comfort' ? 'rgba(255,167,38,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'comfort' ? '1px solid rgba(255,167,38,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-1 ha-icon {
+    color: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'comfort' ? '#FFA726' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 2 — Eco (green) */
+  .bubble-sub-button-2 {
+    background: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'eco' ? 'rgba(102,187,106,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'eco' ? '1px solid rgba(102,187,106,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-2 ha-icon {
+    color: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'eco' ? '#66BB6A' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 3 — Away (blue-grey) */
+  .bubble-sub-button-3 {
+    background: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'away' ? 'rgba(120,144,156,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'away' ? '1px solid rgba(120,144,156,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-3 ha-icon {
+    color: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'away' ? '#78909C' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 4 — Boost (deep orange) */
+  .bubble-sub-button-4 {
+    background: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'boost' ? 'rgba(255,87,34,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'boost' ? '1px solid rgba(255,87,34,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-4 ha-icon {
+    color: ${hass.states['climate.bedroom']?.attributes?.preset_mode === 'boost' ? '#FF5722' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* ── MODE BUTTONS (bottom row) ──────────────────────────── */
+
+  /* 5 — Off (grey) */
+  .bubble-sub-button-5 {
+    background: ${hass.states['climate.bedroom']?.state === 'off' ? 'rgba(111,111,111,0.25)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'off' ? '1px solid rgba(111,111,111,0.4)' : ''} !important;
+  }
+  .bubble-sub-button-5 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'off' ? 'var(--primary-text-color)' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 6 — Heat (orange) */
+  .bubble-sub-button-6 {
+    background: ${hass.states['climate.bedroom']?.state === 'heat' ? 'rgba(255,112,67,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'heat' ? '1px solid rgba(255,112,67,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-6 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'heat' ? '#FF7043' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 7 — Auto / heat_cool (green) */
+  .bubble-sub-button-7 {
+    background: ${hass.states['climate.bedroom']?.state === 'heat_cool' ? 'rgba(102,187,106,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'heat_cool' ? '1px solid rgba(102,187,106,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-7 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'heat_cool' ? '#66BB6A' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 8 — Cool (blue) */
+  .bubble-sub-button-8 {
+    background: ${hass.states['climate.bedroom']?.state === 'cool' ? 'rgba(79,195,247,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'cool' ? '1px solid rgba(79,195,247,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-8 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'cool' ? '#4FC3F7' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 9 — Dry (teal) */
+  .bubble-sub-button-9 {
+    background: ${hass.states['climate.bedroom']?.state === 'dry' ? 'rgba(38,198,218,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'dry' ? '1px solid rgba(38,198,218,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-9 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'dry' ? '#26C6DA' : 'var(--disabled-text-color)'} !important;
+  }
+
+  /* 10 — Fan (grey-blue) */
+  .bubble-sub-button-10 {
+    background: ${hass.states['climate.bedroom']?.state === 'fan_only' ? 'rgba(144,164,174,0.20)' : 'rgba(111,111,111,0.08)'} !important;
+    border: ${hass.states['climate.bedroom']?.state === 'fan_only' ? '1px solid rgba(144,164,174,0.35)' : ''} !important;
+  }
+  .bubble-sub-button-10 ha-icon {
+    color: ${hass.states['climate.bedroom']?.state === 'fan_only' ? '#90A4AE' : 'var(--disabled-text-color)'} !important;
+  }

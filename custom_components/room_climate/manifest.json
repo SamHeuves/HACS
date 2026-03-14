@@ -1,0 +1,13 @@
+{
+  "domain": "room_climate",
+  "name": "Room Climate",
+  "version": "1.1.0",
+  "documentation": "https://github.com/yourusername/room-climate",
+  "issue_tracker": "https://github.com/yourusername/room-climate/issues",
+  "description": "Coordinates TRV(s) and an optional AC into a single virtual climate entity per room — with offset calibration, presets, fan control, auto mode, and window detection.",
+  "config_flow": true,
+  "iot_class": "calculated",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": []
+}
