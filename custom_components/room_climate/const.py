@@ -34,9 +34,6 @@ BOOST_SETPOINT = 25.0
 # Dry mode AC setpoint
 DRY_MODE_TEMP = 16.0
 
-# Auto (heat_cool) deadband — prevents rapid switching between heat and cool
-AUTO_DEADBAND = 0.5
-
 # Preset temperature defaults (fixed comfort/eco)
 DEFAULT_COMFORT_TEMP = 20.0
 DEFAULT_ECO_TEMP = 17.0

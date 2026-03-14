@@ -28,7 +28,6 @@ async def async_get_config_entry_diagnostics(
             "fan_mode": coordinator.fan_mode,
             "boost_active": coordinator.boost_active,
             "window_blocked": coordinator.window_blocked,
-            "auto_submode": coordinator.auto_submode,
             "calibration_mode": coordinator.calibration_mode,
             "calibration_offset": coordinator.calibration_offset,
             "last_applied_setpoints": coordinator.last_applied_setpoints,

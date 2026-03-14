@@ -134,7 +134,6 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
         if self._coordinator.has_ac:
             return [
                 HVACMode.OFF,
-                HVACMode.HEAT_COOL,
                 HVACMode.HEAT,
                 HVACMode.COOL,
                 HVACMode.DRY,
@@ -144,6 +143,9 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
 
     @property
     def hvac_mode(self) -> HVACMode:
+        """Report OFF when window is open so card and UI show 'Off' instead of 'Heating'."""
+        if self._coordinator.window_blocked:
+            return HVACMode.OFF
         return HVACMode(self._coordinator.hvac_mode)
 
     @property
@@ -175,13 +177,6 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             return HVACAction.DRYING
         if mode == HVACMode.FAN_ONLY:
             return HVACAction.FAN
-        if mode == HVACMode.HEAT_COOL:
-            sub = self._coordinator.auto_submode
-            if sub == "heating":
-                return HVACAction.HEATING
-            if sub == "cooling":
-                return HVACAction.COOLING
-            return HVACAction.IDLE
         return None
 
     # ------------------------------------------------------------------
@@ -243,8 +238,6 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             "comfort_temp": self._coordinator.comfort_config,
             "eco_temp": self._coordinator.eco_config,
         }
-        if self._coordinator.hvac_mode == HVACMode.HEAT_COOL:
-            attrs["auto_submode"] = self._coordinator.auto_submode
         if len(self._coordinator.all_trvs) > 1:
             attrs["trv_count"] = len(self._coordinator.all_trvs)
         return attrs

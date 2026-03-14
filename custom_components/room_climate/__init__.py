@@ -7,19 +7,21 @@ import logging
 from homeassistant.components.climate import HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    ATTR_ENTITY_ID,
     Platform,
     STATE_ON,
     STATE_OPEN,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
+import voluptuous as vol
 
 from .const import (
     AGGRESSIVE_MULTIPLIER,
-    AUTO_DEADBAND,
     BOOST_SETPOINT,
     CALIBRATION_AGGRESSIVE,
     CONF_AC_ENTITY,
@@ -50,6 +52,22 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = [Platform.CLIMATE, Platform.BINARY_SENSOR, Platform.SENSOR]
 
 
+async def _async_handle_boost_service(
+    hass: HomeAssistant, call: ServiceCall, enable: bool
+) -> None:
+    """Handle room_climate.enable_boost / disable_boost service calls."""
+    entity_ids = call.data.get(ATTR_ENTITY_ID)
+    if isinstance(entity_ids, str):
+        entity_ids = [entity_ids]
+    for eid in entity_ids:
+        for coordinator in hass.data.get(DOMAIN, {}).values():
+            if not isinstance(coordinator, RoomClimateCoordinator):
+                continue
+            if coordinator._climate_entity and coordinator._climate_entity.entity_id == eid:
+                await coordinator.async_set_boost(enable)
+                break
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Room Climate from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -57,6 +75,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await coordinator.async_setup()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    if not hass.services.has_service(DOMAIN, "enable_boost"):
+
+        async def async_handle_enable_boost(call: ServiceCall) -> None:
+            await _async_handle_boost_service(hass, call, True)
+
+        async def async_handle_disable_boost(call: ServiceCall) -> None:
+            await _async_handle_boost_service(hass, call, False)
+
+        hass.services.async_register(
+            DOMAIN,
+            "enable_boost",
+            async_handle_enable_boost,
+            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
+        )
+        hass.services.async_register(
+            DOMAIN,
+            "disable_boost",
+            async_handle_disable_boost,
+            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
+        )
+
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     return True
 
@@ -122,7 +162,6 @@ class RoomClimateCoordinator:
         self._boost_active: bool = False
         self._preset_mode: str | None = None
         self._fan_mode: str = FAN_AUTO
-        self._auto_submode: str | None = None
 
         # Window state
         self._window_blocked: bool = False
@@ -215,10 +254,6 @@ class RoomClimateCoordinator:
     @property
     def fan_mode(self) -> str:
         return self._fan_mode
-
-    @property
-    def auto_submode(self) -> str | None:
-        return self._auto_submode
 
     @property
     def window_blocked(self) -> bool:
@@ -339,8 +374,6 @@ class RoomClimateCoordinator:
         """Set a new HVAC mode."""
         if hvac_mode != HVACMode.HEAT and self._boost_active:
             self._boost_active = False
-        if hvac_mode != HVACMode.HEAT_COOL:
-            self._auto_submode = None
         self._hvac_mode = hvac_mode
         self._last_applied_setpoints.clear()
         await self._async_apply()
@@ -372,7 +405,7 @@ class RoomClimateCoordinator:
         """Set fan mode and apply to AC if active."""
         self._fan_mode = fan_mode
         if self.has_ac and self._hvac_mode in (
-            HVACMode.COOL, HVACMode.HEAT_COOL, HVACMode.DRY, HVACMode.FAN_ONLY,
+            HVACMode.COOL, HVACMode.DRY, HVACMode.FAN_ONLY,
         ):
             await self._ac_set_fan_mode()
         if self._hvac_mode == HVACMode.HEAT and self._boost_active and self.has_ac:
@@ -433,9 +466,6 @@ class RoomClimateCoordinator:
                 else:
                     await self._ac_off()
 
-        elif mode == HVACMode.HEAT_COOL:
-            await self._apply_auto_mode()
-
         elif mode == HVACMode.COOL:
             await self._off_all_trvs()
             if self.has_ac:
@@ -451,46 +481,6 @@ class RoomClimateCoordinator:
             if self.has_ac:
                 await self._ac_fan_only()
 
-    async def _apply_auto_mode(self) -> None:
-        """Auto heat/cool: use deadband around target to decide action."""
-        current = self.current_temp
-        target = self._target_temp
-
-        if current is None:
-            self._auto_submode = "heating"
-            await self._heat_all_trvs(target=target)
-            if self.has_ac:
-                await self._ac_off()
-            return
-
-        if current < target - AUTO_DEADBAND:
-            self._auto_submode = "heating"
-            await self._heat_all_trvs(target=target)
-            if self.has_ac:
-                await self._ac_off()
-
-        elif current > target + AUTO_DEADBAND:
-            self._auto_submode = "cooling"
-            await self._off_all_trvs()
-            if self.has_ac:
-                await self._ac_set(HVACMode.COOL, target)
-
-        elif self._auto_submode == "heating":
-            await self._heat_all_trvs(target=target)
-            if self.has_ac:
-                await self._ac_off()
-
-        elif self._auto_submode == "cooling":
-            await self._off_all_trvs()
-            if self.has_ac:
-                await self._ac_set(HVACMode.COOL, target)
-
-        else:
-            self._auto_submode = None
-            await self._off_all_trvs()
-            if self.has_ac:
-                await self._ac_off()
-
     # ------------------------------------------------------------------
     # State change handling
     # ------------------------------------------------------------------
@@ -505,16 +495,24 @@ class RoomClimateCoordinator:
             self._handle_window_change(new_state)
         else:
             if (
-                self._hvac_mode in (HVACMode.HEAT, HVACMode.HEAT_COOL)
+                self._hvac_mode == HVACMode.HEAT
                 and not self._window_blocked
             ):
                 self.hass.async_create_task(self._async_recalibrate())
             self._notify_entities()
 
     async def _async_recalibrate(self) -> None:
-        """Recalculate setpoints on sensor changes."""
+        """Recalculate setpoints on sensor changes. Auto-turn-off boost when target reached."""
         if self._hvac_mode == HVACMode.HEAT:
             if self._boost_active:
+                current = self.current_temp
+                if current is not None and current >= self._target_temp:
+                    self._boost_active = False
+                    self._last_applied_setpoints.clear()
+                    await self._async_apply()
+                    self._notify_entities()
+                    _LOGGER.debug("%s: boost auto-off — target %.1f °C reached", self.name, self._target_temp)
+                    return
                 return
             for trv in self.all_trvs:
                 sp = self._compute_tado_setpoint_for(trv)
@@ -522,8 +520,6 @@ class RoomClimateCoordinator:
                     self._last_applied_setpoints[trv] = sp
                     await self._trv_heat_one(trv, sp)
                     _LOGGER.debug("%s: recalibrated %s → %.1f", self.name, trv, sp)
-        elif self._hvac_mode == HVACMode.HEAT_COOL:
-            await self._apply_auto_mode()
 
     # ------------------------------------------------------------------
     # Window logic
@@ -573,6 +569,7 @@ class RoomClimateCoordinator:
         await self._off_all_trvs()
         if self.has_ac:
             await self._ac_off()
+        self._notify_entities()
         _LOGGER.debug("%s: window opened — HVAC paused", self.name)
 
     async def _async_window_closed(self) -> None:
