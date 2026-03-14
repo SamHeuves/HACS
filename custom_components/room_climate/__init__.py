@@ -666,6 +666,10 @@ class RoomClimateCoordinator:
                 self.ac_entity, mode, err,
             )
             return
+        # Gree (and similar UDP-based ACs) need a moment to commit the mode change
+        # before accepting a temperature command; without this delay the device
+        # silently processes only the first UDP packet and drops the second.
+        await asyncio.sleep(0.5)
         # Step 2: set temperature (separate call; AC entity state changes from step 1
         # are isolated to _notify_entities only, so no spurious re-apply can interfere)
         try:

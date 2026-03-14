@@ -71,6 +71,14 @@ This file summarizes what has been done and agreed so far, so you can continue i
 - **Debug logging:** All AC helper methods (`_ac_off`, `_ac_set`, `_ac_fan_only`, `_ac_set_fan_mode`) now log at DEBUG level, showing entity_id, mode, and temperature. Boost service calls also log. Enable debug logging for `custom_components.room_climate` in HA to see them.
 - **Cleanup:** Removed dead `_trv_off_one()` method (only `_off_all_trvs` is used). Fixed `binary_sensor.py` docstring. Updated `manifest.json` URLs to actual repo. Removed stale "auto modes" text from `strings.json` / `en.json`.
 
+### 9. Gree/Vaillant AC timing fix
+
+- **AC model:** Vaillant-branded Gree (uses HA's built-in `gree` integration, local UDP protocol).
+- **Root cause of temperature-not-applying bug:** The Gree integration sends commands as UDP packets via `push_state_update()`. The physical device processes each UDP packet before it's ready for the next. Calling `climate.set_temperature` **immediately** after `climate.set_hvac_mode` (no delay) meant the device silently processed only the mode-change packet and dropped the temperature packet. Result: AC changed mode but stayed at old/default temperature (e.g. 16 °C minimum).
+- **Fix:** Added `asyncio.sleep(0.5)` in `_ac_set()` between the `set_hvac_mode` call and the `set_temperature` call.
+- **DRY / FAN_ONLY not working:** These HVAC modes may not be supported on this specific Vaillant unit. When a mode is not in the entity's `hvac_modes`, HA throws `ServiceValidationError` (caught, logged as warning). This is a hardware limitation — no code fix possible.
+- **AC state changes excluded from TRV recalibration:** `_handle_state_change` skips `_async_recalibrate` when the state-changing entity is `self.ac_entity` (prevents the AC's own state change response from triggering unwanted setpoint recalculation on TRVs).
+
 ---
 
 ## Discussed but not (fully) implemented
