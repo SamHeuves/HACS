@@ -24,6 +24,7 @@ from .const import (
     AGGRESSIVE_MULTIPLIER,
     BOOST_SETPOINT,
     CALIBRATION_AGGRESSIVE,
+    DRY_MODE_TEMP,
     CONF_AC_ENTITY,
     CONF_ADDITIONAL_TRVS,
     CONF_CALIBRATION_MODE,
@@ -403,6 +404,8 @@ class RoomClimateCoordinator:
         if hvac_mode != HVACMode.HEAT and self._boost_active:
             self._boost_active = False
         self._hvac_mode = hvac_mode
+        if hvac_mode == HVACMode.DRY:
+            self._target_temp = DRY_MODE_TEMP
         self._last_applied_setpoints.clear()
         await self._async_apply()
         self._notify_entities()
