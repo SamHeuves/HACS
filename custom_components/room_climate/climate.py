@@ -25,7 +25,6 @@ from .const import (
     DEFAULT_TARGET_TEMP,
     DEFAULT_TEMP_STEP,
     DOMAIN,
-    DRY_MODE_TEMP,
     FAN_AUTO,
     PRESET_MODES,
 )
@@ -193,9 +192,6 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
 
     @property
     def target_temperature(self) -> float:
-        # DRY mode always uses a fixed setpoint; show it in the card temperature display
-        if self._coordinator.hvac_mode == HVACMode.DRY:
-            return DRY_MODE_TEMP
         return self._coordinator.target_temp
 
     # ------------------------------------------------------------------

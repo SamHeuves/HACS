@@ -41,7 +41,6 @@ from .const import (
     DEFAULT_WINDOW_CLOSE_DELAY,
     DEFAULT_WINDOW_OPEN_DELAY,
     DOMAIN,
-    DRY_MODE_TEMP,
     FAN_AUTO,
     PRESET_COMFORT,
     PRESET_ECO,
@@ -492,8 +491,8 @@ class RoomClimateCoordinator:
             await self._heat_all_trvs(boost=self._boost_active)
             if self.has_ac:
                 if self._boost_active:
-                    # Drive AC at boost setpoint so it heats aggressively (same as TRVs)
-                    await self._ac_set(HVACMode.HEAT, BOOST_SETPOINT)
+                    # AC heats at the same target as the master entity.
+                    await self._ac_set(HVACMode.HEAT, self._target_temp)
                 else:
                     await self._ac_off()
 
@@ -505,7 +504,8 @@ class RoomClimateCoordinator:
         elif mode == HVACMode.DRY:
             await self._off_all_trvs()
             if self.has_ac:
-                await self._ac_set(HVACMode.DRY, DRY_MODE_TEMP)
+                # Use the same target as the master entity so all devices stay in sync.
+                await self._ac_set(HVACMode.DRY, self._target_temp)
 
         elif mode == HVACMode.FAN_ONLY:
             await self._off_all_trvs()
@@ -653,37 +653,50 @@ class RoomClimateCoordinator:
         _LOGGER.debug(
             "%s: AC set → %s mode=%s temp=%.1f", self.name, self.ac_entity, mode, temperature
         )
-        # Step 1: change mode (works universally with climate.set_hvac_mode)
-        try:
-            await self.hass.services.async_call(
-                "climate",
-                "set_hvac_mode",
-                {"entity_id": self.ac_entity, "hvac_mode": mode},
-            )
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Failed to set %s hvac_mode to %s: %s",
-                self.ac_entity, mode, err,
-            )
-            return
-        # Gree (and similar UDP-based ACs) need a moment to commit the mode change
-        # before accepting a temperature command; without this delay the device
-        # silently processes only the first UDP packet and drops the second.
+        ac_state = self.hass.states.get(self.ac_entity)
+        current_mode = ac_state.state if ac_state else None
+
+        if current_mode != mode:
+            # Mode needs to change.  Use Gree's native combined service call:
+            # climate.set_temperature with hvac_mode + temperature in one call keeps
+            # both changes inside the same entity coroutine, so Gree's raw_properties
+            # (the dict that backs every push_state_update) cannot be corrupted by a
+            # concurrent state-update between a separate set_hvac_mode and set_temperature.
+            try:
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_temperature",
+                    {
+                        "entity_id": self.ac_entity,
+                        "hvac_mode": mode,
+                        "temperature": temperature,
+                    },
+                )
+            except HomeAssistantError as err:
+                _LOGGER.warning(
+                    "Failed to set %s mode=%s temp=%.1f: %s",
+                    self.ac_entity, mode, temperature, err,
+                )
+                return
+        else:
+            # Mode is already correct — skip the mode push entirely and only update
+            # temperature so we don't risk reverting the mode via a stale raw_properties
+            # snapshot inside a redundant set_hvac_mode push.
+            try:
+                await self.hass.services.async_call(
+                    "climate",
+                    "set_temperature",
+                    {"entity_id": self.ac_entity, "temperature": temperature},
+                )
+            except HomeAssistantError as err:
+                _LOGGER.warning(
+                    "Failed to set %s temperature to %.1f: %s",
+                    self.ac_entity, temperature, err,
+                )
+                return
+
+        # Brief pause so Gree can commit the temperature push before the fan-speed push.
         await asyncio.sleep(0.5)
-        # Step 2: set temperature (separate call; AC entity state changes from step 1
-        # are isolated to _notify_entities only, so no spurious re-apply can interfere)
-        try:
-            await self.hass.services.async_call(
-                "climate",
-                "set_temperature",
-                {"entity_id": self.ac_entity, "temperature": temperature},
-            )
-        except HomeAssistantError as err:
-            _LOGGER.warning(
-                "Failed to set %s temperature to %.1f: %s",
-                self.ac_entity, temperature, err,
-            )
-            return
         await self._ac_set_fan_mode()
 
     async def _ac_fan_only(self) -> None:
