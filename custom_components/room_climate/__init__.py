@@ -5,7 +5,6 @@ import asyncio
 import logging
 
 from homeassistant.components.climate import HVACMode
-from homeassistant.components.climate.const import PRESET_NONE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     Platform,
@@ -41,7 +40,6 @@ from .const import (
     DEFAULT_WINDOW_OPEN_DELAY,
     DOMAIN,
     FAN_AUTO,
-    PRESET_COMFORT,
     PRESET_ECO,
 )
 
@@ -165,25 +163,17 @@ class RoomClimateCoordinator:
             )
         )
 
-        # Window already open at startup: do not wait for an edge event — pause
-        # HVAC immediately and still register the debounced handler so close→open
-        # transitions behave consistently afterward.
+        # Seed window state from the *current* sensor reading at startup, so a
+        # window that was already open before HA started is not ignored until
+        # the next state change.
         if self.window_sensor:
             state = self.hass.states.get(self.window_sensor)
-            if state is not None and state.state in (
-                STATE_ON,
-                STATE_OPEN,
-                "open",
-            ):
+            if state and state.state in (STATE_ON, STATE_OPEN, "open"):
                 self._window_blocked = True
-                await self._off_all_trvs()
-                if self.has_ac:
-                    await self._ac_off()
                 _LOGGER.debug(
-                    "%s: window open at startup — HVAC paused immediately",
+                    "%s: window already open at setup — HVAC will stay paused until it closes",
                     self.name,
                 )
-                self._handle_window_change(state)
 
     @callback
     def async_unload(self) -> None:
@@ -493,23 +483,16 @@ class RoomClimateCoordinator:
     async def async_set_preset_mode(self, preset: str | None) -> None:
         """Activate a preset mode (comfort or eco — fixed temperatures).
 
-        Clearing the preset (``None``, ``PRESET_NONE``, or empty) leaves the
-        current target temperature alone — only explicit comfort/eco retargets.
-
-        Selecting a preset cancels boost so UI state stays consistent.
+        Clearing the preset (preset is None) leaves the current target
+        temperature alone — only explicit comfort/eco selection retargets.
         """
-        self._boost_active = False
+        self._preset_mode = preset
 
-        if preset in (None, PRESET_NONE, ""):
-            self._preset_mode = None
-        elif preset == PRESET_ECO:
-            self._preset_mode = PRESET_ECO
+        if preset == PRESET_ECO:
             self._target_temp = self._eco_config
-        elif preset == PRESET_COMFORT:
-            self._preset_mode = PRESET_COMFORT
+        elif preset is not None:
+            # Anything else explicitly selected → comfort
             self._target_temp = self._comfort_config
-        else:
-            self._preset_mode = None
 
         self._reset_applied_state()
         await self._async_apply()
@@ -560,7 +543,7 @@ class RoomClimateCoordinator:
         self._hvac_mode = hvac_mode
         self._target_temp = target_temp
         self._boost_active = boost
-        self._preset_mode = None if boost else preset
+        self._preset_mode = preset
         self._fan_mode = fan_mode or FAN_AUTO
 
     async def async_apply_after_restore(self) -> None:
@@ -571,7 +554,6 @@ class RoomClimateCoordinator:
         the next watched-entity state change forces a recalibration.
         """
         # Window-blocked check is handled inside ``_async_apply``.
-        self._reset_applied_state()
         await self._async_apply()
 
     # ------------------------------------------------------------------
