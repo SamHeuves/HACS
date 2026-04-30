@@ -40,6 +40,7 @@ from .const import (
     DEFAULT_WINDOW_OPEN_DELAY,
     DOMAIN,
     FAN_AUTO,
+    PRESET_COMFORT,
     PRESET_ECO,
 )
 
@@ -465,7 +466,7 @@ class RoomClimateCoordinator:
         if hvac_mode != HVACMode.HEAT and self._boost_active:
             self._boost_active = False
         self._hvac_mode = hvac_mode
-        if hvac_mode == HVACMode.DRY:
+        if hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
             self._target_temp = DRY_MODE_TEMP
         self._reset_applied_state()
         await self._async_apply()
@@ -473,6 +474,8 @@ class RoomClimateCoordinator:
 
     async def async_set_temperature(self, temperature: float) -> None:
         """Set a new target temperature (clears active preset)."""
+        if self._hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
+            return
         self._target_temp = temperature
         self._preset_mode = None
         self._boost_active = False
@@ -489,10 +492,11 @@ class RoomClimateCoordinator:
         self._preset_mode = preset
 
         if preset == PRESET_ECO:
-            self._target_temp = self._eco_config
-        elif preset is not None:
-            # Anything else explicitly selected → comfort
-            self._target_temp = self._comfort_config
+            if self._hvac_mode not in (HVACMode.DRY, HVACMode.FAN_ONLY):
+                self._target_temp = self._eco_config
+        elif preset == PRESET_COMFORT:
+            if self._hvac_mode not in (HVACMode.DRY, HVACMode.FAN_ONLY):
+                self._target_temp = self._comfort_config
 
         self._reset_applied_state()
         await self._async_apply()
@@ -541,7 +545,10 @@ class RoomClimateCoordinator:
     ) -> None:
         """Called by the climate entity after it restores its last state."""
         self._hvac_mode = hvac_mode
-        self._target_temp = target_temp
+        if hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
+            self._target_temp = DRY_MODE_TEMP
+        else:
+            self._target_temp = target_temp
         self._boost_active = boost
         self._preset_mode = preset
         self._fan_mode = fan_mode or FAN_AUTO
@@ -606,10 +613,7 @@ class RoomClimateCoordinator:
         elif mode == HVACMode.DRY:
             await self._off_all_trvs()
             if self.has_ac:
-                # DRY mode primarily targets humidity, but most ACs still
-                # honour a setpoint while in DRY. Calibrating it keeps the
-                # behaviour consistent with COOL.
-                sp = self._compute_ac_setpoint()
+                sp = float(DRY_MODE_TEMP)
                 await self._ac_set(HVACMode.DRY, sp)
                 self._last_applied_ac_setpoint = sp
 
@@ -644,7 +648,7 @@ class RoomClimateCoordinator:
 
         # External room sensor / TRV state changes are the legitimate
         # signals that drive recalibration: the room temperature evolved
-        # and either the TRV (HEAT) or the AC (COOL/DRY/HEAT+boost) needs
+        # and either the TRV (HEAT) or the AC (COOL/HEAT+boost) needs
         # its setpoint biased differently.
         if self._needs_recalibration():
             # _async_recalibrate notifies entities itself once the new
@@ -659,14 +663,15 @@ class RoomClimateCoordinator:
         """Whether the current state benefits from sensor-driven recalibration.
 
         - HEAT (with or without boost): TRVs always; AC during boost.
-        - COOL / DRY: AC tracks calibrated setpoint.
+        - COOL: AC tracks calibrated setpoint.
+        - DRY: fixed AC setpoint (no sensor-driven recalibration).
         - FAN_ONLY / OFF / window-blocked: nothing to recalibrate.
         """
         if self._window_blocked:
             return False
         if self._hvac_mode == HVACMode.HEAT:
             return True
-        if self._hvac_mode in (HVACMode.COOL, HVACMode.DRY) and self.has_ac:
+        if self._hvac_mode == HVACMode.COOL and self.has_ac:
             return True
         return False
 
@@ -706,7 +711,7 @@ class RoomClimateCoordinator:
                         "%s: recalibrated %s → %.1f", self.name, trv, sp
                     )
 
-        elif mode in (HVACMode.COOL, HVACMode.DRY) and self.has_ac:
+        elif mode == HVACMode.COOL and self.has_ac:
             await self._maybe_recalibrate_ac()
 
         self._notify_entities()

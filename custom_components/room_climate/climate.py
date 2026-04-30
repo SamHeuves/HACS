@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_TARGET_TEMP,
     DEFAULT_TEMP_STEP,
     DOMAIN,
+    DRY_MODE_TEMP,
     FAN_AUTO,
     PRESET_MODES,
 )
@@ -65,8 +66,6 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
     _attr_name = None
     _attr_translation_key = "master"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
-    _attr_min_temp = DEFAULT_MIN_TEMP
-    _attr_max_temp = DEFAULT_MAX_TEMP
     _attr_target_temperature_step = DEFAULT_TEMP_STEP
 
     def __init__(
@@ -113,6 +112,9 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             except (TypeError, ValueError):
                 target_temp = DEFAULT_TARGET_TEMP
 
+            if hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
+                target_temp = DRY_MODE_TEMP
+
             boost = bool(last_state.attributes.get("boost_active", False))
             preset = last_state.attributes.get("preset_mode")
             if preset not in PRESET_MODES:
@@ -143,14 +145,27 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
     @property
     def supported_features(self) -> ClimateEntityFeature:
         features = (
-            ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TURN_ON
+            ClimateEntityFeature.TURN_ON
             | ClimateEntityFeature.TURN_OFF
             | ClimateEntityFeature.PRESET_MODE
         )
+        if self._coordinator.hvac_mode not in (HVACMode.DRY, HVACMode.FAN_ONLY):
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE
         if self._coordinator.has_ac:
             features |= ClimateEntityFeature.FAN_MODE
         return features
+
+    @property
+    def min_temp(self) -> float:
+        if self._coordinator.hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
+            return DRY_MODE_TEMP
+        return DEFAULT_MIN_TEMP
+
+    @property
+    def max_temp(self) -> float:
+        if self._coordinator.hvac_mode in (HVACMode.DRY, HVACMode.FAN_ONLY):
+            return DRY_MODE_TEMP
+        return DEFAULT_MAX_TEMP
 
     # ------------------------------------------------------------------
     # HVAC modes
