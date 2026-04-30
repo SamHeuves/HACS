@@ -11,10 +11,11 @@
       },
       "optional_devices": {
         "title": "Optional devices",
-        "description": "Optionally add an AC unit (enables cool, dry, fan modes), an external temperature sensor for offset calibration, and additional TRVs for rooms with multiple radiators.",
+        "description": "Optionally add an AC unit (enables cool, dry, fan modes), an external temperature sensor for offset calibration, an optional humidity sensor, and additional TRVs for rooms with multiple radiators.",
         "data": {
           "ac_entity": "AC unit",
           "temp_sensor": "External temperature sensor",
+          "humidity_sensor": "Humidity sensor (optional)",
           "additional_trvs": "Additional TRV entities"
         }
       },
@@ -55,6 +56,7 @@
         "data": {
           "ac_entity": "AC unit",
           "temp_sensor": "External temperature sensor",
+          "humidity_sensor": "Humidity sensor (optional)",
           "additional_trvs": "Additional TRV entities"
         }
       },

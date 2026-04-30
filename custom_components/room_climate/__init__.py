@@ -7,22 +7,19 @@ import logging
 from homeassistant.components.climate import HVACMode
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    ATTR_ENTITY_ID,
     Platform,
     STATE_ON,
     STATE_OPEN,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_state_change_event
-import voluptuous as vol
 
 from .const import (
     AGGRESSIVE_MULTIPLIER,
-    BOOST_SETPOINT,
+    BOOST_FALLBACK_SETPOINT,
     CALIBRATION_AGGRESSIVE,
     DRY_MODE_TEMP,
     CONF_AC_ENTITY,
@@ -30,6 +27,7 @@ from .const import (
     CONF_CALIBRATION_MODE,
     CONF_COMFORT_TEMP,
     CONF_ECO_TEMP,
+    CONF_HUMIDITY_SENSOR,
     CONF_TADO_ENTITY,
     CONF_TEMP_SENSOR,
     CONF_WINDOW_CLOSE_DELAY,
@@ -37,43 +35,17 @@ from .const import (
     CONF_WINDOW_SENSOR,
     DEFAULT_COMFORT_TEMP,
     DEFAULT_ECO_TEMP,
-    DEFAULT_MIN_TEMP,
     DEFAULT_TARGET_TEMP,
     DEFAULT_WINDOW_CLOSE_DELAY,
     DEFAULT_WINDOW_OPEN_DELAY,
     DOMAIN,
     FAN_AUTO,
-    PRESET_COMFORT,
     PRESET_ECO,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = [Platform.CLIMATE, Platform.BINARY_SENSOR, Platform.SENSOR]
-
-
-async def _async_handle_boost_service(
-    hass: HomeAssistant, call: ServiceCall, enable: bool
-) -> None:
-    """Handle room_climate.enable_boost / disable_boost service calls."""
-    entity_ids = call.data.get(ATTR_ENTITY_ID)
-    if isinstance(entity_ids, str):
-        entity_ids = [entity_ids]
-    for eid in entity_ids:
-        found = False
-        for coordinator in hass.data.get(DOMAIN, {}).values():
-            if not isinstance(coordinator, RoomClimateCoordinator):
-                continue
-            if coordinator._climate_entity and coordinator._climate_entity.entity_id == eid:
-                found = True
-                _LOGGER.debug("%s: boost %s", eid, "on" if enable else "off")
-                await coordinator.async_set_boost(enable)
-                break
-        if not found:
-            _LOGGER.warning(
-                "room_climate boost service: no coordinator found for entity_id %s",
-                eid,
-            )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -83,48 +55,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await coordinator.async_setup()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    if not hass.services.has_service(DOMAIN, "enable_boost"):
-
-        async def async_handle_enable_boost(call: ServiceCall) -> None:
-            await _async_handle_boost_service(hass, call, True)
-
-        async def async_handle_disable_boost(call: ServiceCall) -> None:
-            await _async_handle_boost_service(hass, call, False)
-
-        async def async_handle_toggle_boost(call: ServiceCall) -> None:
-            """Toggle boost per entity: enable if off, disable if on."""
-            entity_ids = call.data.get(ATTR_ENTITY_ID)
-            if isinstance(entity_ids, str):
-                entity_ids = [entity_ids]
-            for eid in entity_ids:
-                for coordinator in hass.data.get(DOMAIN, {}).values():
-                    if not isinstance(coordinator, RoomClimateCoordinator):
-                        continue
-                    if coordinator._climate_entity and coordinator._climate_entity.entity_id == eid:
-                        enable = not coordinator.boost_active
-                        _LOGGER.debug("%s: boost toggle → %s", eid, "on" if enable else "off")
-                        await coordinator.async_set_boost(enable)
-                        break
-
-        hass.services.async_register(
-            DOMAIN,
-            "enable_boost",
-            async_handle_enable_boost,
-            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            "disable_boost",
-            async_handle_disable_boost,
-            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            "toggle_boost",
-            async_handle_toggle_boost,
-            schema=vol.Schema({vol.Required(ATTR_ENTITY_ID): cv.entity_ids}),
-        )
 
     entry.async_on_unload(entry.add_update_listener(async_update_listener))
     return True
@@ -148,8 +78,9 @@ async def async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None
 class RoomClimateCoordinator:
     """Central coordinator for one room.
 
-    Manages mode routing, offset calibration, window detection, boost/presets,
-    fan mode, auto heat-cool switching, and multi-TRV support.
+    Manages mode routing, offset calibration, window detection, boost,
+    presets, fan mode, and multi-TRV support. Owns the state machine —
+    entities (climate, binary_sensor, sensor) are thin views over it.
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -168,6 +99,7 @@ class RoomClimateCoordinator:
         self.all_trvs: list[str] = [self.tado_entity] + self.additional_trvs
         self.ac_entity: str | None = config.get(CONF_AC_ENTITY)
         self.temp_sensor: str | None = config.get(CONF_TEMP_SENSOR)
+        self.humidity_sensor: str | None = config.get(CONF_HUMIDITY_SENSOR)
         self.window_sensor: str | None = config.get(CONF_WINDOW_SENSOR)
 
         # Configuration
@@ -199,6 +131,9 @@ class RoomClimateCoordinator:
 
         # Per-TRV dedup to prevent redundant service calls
         self._last_applied_setpoints: dict[str, float] = {}
+        # Last AC setpoint we wrote (after offset calibration). ``None`` when
+        # the AC is currently off / has no temperature concept (FAN_ONLY).
+        self._last_applied_ac_setpoint: float | None = None
 
         # Listeners & registered entities
         self._unsub_listeners: list = []
@@ -217,6 +152,8 @@ class RoomClimateCoordinator:
             entities_to_watch.append(self.ac_entity)
         if self.temp_sensor:
             entities_to_watch.append(self.temp_sensor)
+        if self.humidity_sensor:
+            entities_to_watch.append(self.humidity_sensor)
         if self.window_sensor:
             entities_to_watch.append(self.window_sensor)
 
@@ -225,6 +162,18 @@ class RoomClimateCoordinator:
                 self.hass, entities_to_watch, self._handle_state_change
             )
         )
+
+        # Seed window state from the *current* sensor reading at startup, so a
+        # window that was already open before HA started is not ignored until
+        # the next state change.
+        if self.window_sensor:
+            state = self.hass.states.get(self.window_sensor)
+            if state and state.state in (STATE_ON, STATE_OPEN, "open"):
+                self._window_blocked = True
+                _LOGGER.debug(
+                    "%s: window already open at setup — HVAC will stay paused until it closes",
+                    self.name,
+                )
 
     @callback
     def async_unload(self) -> None:
@@ -308,6 +257,34 @@ class RoomClimateCoordinator:
         return None
 
     @property
+    def current_humidity(self) -> float | None:
+        """Current room humidity, when available.
+
+        Priority:
+        1. Dedicated external humidity sensor (if configured)
+        2. Humidity attribute on the external temperature sensor
+        3. None when nothing is available
+        """
+        if self.humidity_sensor:
+            state = self.hass.states.get(self.humidity_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    pass
+
+        if self.temp_sensor:
+            state = self.hass.states.get(self.temp_sensor)
+            if state and state.state not in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+                hum = state.attributes.get("humidity")
+                if hum is not None:
+                    try:
+                        return float(hum)
+                    except (ValueError, TypeError):
+                        pass
+        return None
+
+    @property
     def calibration_offset(self) -> float | None:
         """Current calibration offset applied to TRV setpoint."""
         if not self.temp_sensor:
@@ -330,8 +307,23 @@ class RoomClimateCoordinator:
         """All per-TRV setpoints (for diagnostics)."""
         return dict(self._last_applied_setpoints)
 
+    @property
+    def last_applied_ac_setpoint(self) -> float | None:
+        """Last setpoint written to the AC (after offset calibration)."""
+        return self._last_applied_ac_setpoint
+
+    def _reset_applied_state(self) -> None:
+        """Clear all per-device applied-setpoint trackers.
+
+        Called whenever the next ``_async_apply`` must re-issue commands
+        from scratch (mode change, preset change, manual temp, boost
+        toggle, window restore).
+        """
+        self._last_applied_setpoints.clear()
+        self._last_applied_ac_setpoint = None
+
     # ------------------------------------------------------------------
-    # Calibrated setpoint calculation (per-TRV)
+    # Calibrated setpoint calculation (per-TRV and per-AC)
     # ------------------------------------------------------------------
 
     def _compute_tado_setpoint_for(
@@ -371,16 +363,85 @@ class RoomClimateCoordinator:
         rounded = round(raw / step) * step
         return max(mi, min(rounded, ma))
 
+    def _compute_ac_setpoint(self, target: float | None = None) -> float:
+        """Compute calibrated AC setpoint, mirroring per-TRV calibration.
+
+        The AC's internal sensor almost never agrees with the user's
+        external room sensor (placement, return-air heat, sensor bias).
+        Without calibration the AC's own thermostat shuts the compressor
+        off when *its* sensor reads target while the actual room is still
+        well off-target — exactly the "didn't stop when it reached the
+        set temperature" symptom. Bias the setpoint by the (target - room)
+        offset so the AC works toward the real room temperature; the
+        offset converges to 0 once the room sensor reaches target, at
+        which point the AC's own thermostat naturally idles the
+        compressor.
+
+        Aggressive calibration is intentionally NOT applied here: ACs
+        already react aggressively, and amplifying further can drive the
+        AC into corner regions of its temperature range.
+
+        Falls back to ``target`` (no calibration) when the external sensor
+        or AC state is missing or unparseable, or when the AC doesn't
+        report ``current_temperature``.
+        """
+        if target is None:
+            target = self._target_temp
+        if not self.has_ac or not self.temp_sensor:
+            return target
+
+        room_state = self.hass.states.get(self.temp_sensor)
+        ac_state = self.hass.states.get(self.ac_entity)
+        if not room_state or room_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return target
+        if not ac_state or ac_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return target
+
+        ac_current = ac_state.attributes.get("current_temperature")
+        if ac_current is None:
+            return target
+
+        try:
+            room_temp = float(room_state.state)
+            ac_temp = float(ac_current)
+        except (ValueError, TypeError):
+            return target
+
+        offset = target - room_temp
+        raw = ac_temp + offset
+
+        mi = float(ac_state.attributes.get("min_temp", 16.0))
+        ma = float(ac_state.attributes.get("max_temp", 32.0))
+        return max(mi, min(round(raw), ma))
+
     # ------------------------------------------------------------------
     # Multi-TRV helpers
     # ------------------------------------------------------------------
+
+    def _boost_setpoint_for(self, trv_entity: str) -> float:
+        """Boost setpoint = the TRV's own max_temp (so the valve opens fully).
+
+        Falls back to ``BOOST_FALLBACK_SETPOINT`` if the TRV doesn't expose
+        ``max_temp`` (e.g. unavailable on startup).
+        """
+        state = self.hass.states.get(trv_entity)
+        if state is not None:
+            try:
+                return float(state.attributes.get("max_temp", BOOST_FALLBACK_SETPOINT))
+            except (ValueError, TypeError):
+                pass
+        return BOOST_FALLBACK_SETPOINT
 
     async def _heat_all_trvs(
         self, *, boost: bool = False, target: float | None = None
     ) -> None:
         """Set all TRVs to heat. Per-TRV calibration; dedup via last setpoint."""
         for trv in self.all_trvs:
-            sp = BOOST_SETPOINT if boost else self._compute_tado_setpoint_for(trv, target)
+            sp = (
+                self._boost_setpoint_for(trv)
+                if boost
+                else self._compute_tado_setpoint_for(trv, target)
+            )
             if self._last_applied_setpoints.get(trv) != sp:
                 self._last_applied_setpoints[trv] = sp
                 await self._trv_heat_one(trv, sp)
@@ -406,7 +467,7 @@ class RoomClimateCoordinator:
         self._hvac_mode = hvac_mode
         if hvac_mode == HVACMode.DRY:
             self._target_temp = DRY_MODE_TEMP
-        self._last_applied_setpoints.clear()
+        self._reset_applied_state()
         await self._async_apply()
         self._notify_entities()
 
@@ -415,20 +476,25 @@ class RoomClimateCoordinator:
         self._target_temp = temperature
         self._preset_mode = None
         self._boost_active = False
-        self._last_applied_setpoints.clear()
+        self._reset_applied_state()
         await self._async_apply()
         self._notify_entities()
 
     async def async_set_preset_mode(self, preset: str | None) -> None:
-        """Activate a preset mode (comfort or eco — fixed temperatures)."""
+        """Activate a preset mode (comfort or eco — fixed temperatures).
+
+        Clearing the preset (preset is None) leaves the current target
+        temperature alone — only explicit comfort/eco selection retargets.
+        """
         self._preset_mode = preset
 
         if preset == PRESET_ECO:
             self._target_temp = self._eco_config
-        else:  # comfort or None
+        elif preset is not None:
+            # Anything else explicitly selected → comfort
             self._target_temp = self._comfort_config
 
-        self._last_applied_setpoints.clear()
+        self._reset_applied_state()
         await self._async_apply()
         self._notify_entities()
 
@@ -444,11 +510,19 @@ class RoomClimateCoordinator:
         self._notify_entities()
 
     async def async_set_boost(self, active: bool) -> None:
-        """Toggle boost via service call (separate from presets)."""
+        """Toggle boost via service call.
+
+        Boost is a transient override: enabling it forces HEAT mode and
+        clears any active preset so the master entity's reported state
+        is never internally inconsistent (e.g. ``preset=eco`` at the same
+        time as boost driving the valve fully open).
+        """
         self._boost_active = active
-        if active and self._hvac_mode != HVACMode.HEAT:
-            self._hvac_mode = HVACMode.HEAT
-        self._last_applied_setpoints.clear()
+        if active:
+            if self._hvac_mode != HVACMode.HEAT:
+                self._hvac_mode = HVACMode.HEAT
+            self._preset_mode = None
+        self._reset_applied_state()
         await self._async_apply()
         self._notify_entities()
 
@@ -472,6 +546,16 @@ class RoomClimateCoordinator:
         self._preset_mode = preset
         self._fan_mode = fan_mode or FAN_AUTO
 
+    async def async_apply_after_restore(self) -> None:
+        """Push the restored state to physical devices.
+
+        Called once during entity setup, after ``restore_state``. Without
+        this, TRVs/AC keep whatever they were doing before HA died until
+        the next watched-entity state change forces a recalibration.
+        """
+        # Window-blocked check is handled inside ``_async_apply``.
+        await self._async_apply()
+
     # ------------------------------------------------------------------
     # Apply current state to physical devices
     # ------------------------------------------------------------------
@@ -492,31 +576,49 @@ class RoomClimateCoordinator:
             await self._off_all_trvs()
             if self.has_ac:
                 await self._ac_off()
+                self._last_applied_ac_setpoint = None
 
         elif mode == HVACMode.HEAT:
             await self._heat_all_trvs(boost=self._boost_active)
             if self.has_ac:
                 if self._boost_active:
-                    # AC heats at the same target as the master entity.
-                    await self._ac_set(HVACMode.HEAT, self._target_temp)
+                    # During boost the AC actively heats — calibrate the
+                    # setpoint against the room sensor so the AC works
+                    # toward the real room temperature, not its own.
+                    sp = self._compute_ac_setpoint()
+                    await self._ac_set(HVACMode.HEAT, sp)
+                    self._last_applied_ac_setpoint = sp
                 else:
                     await self._ac_off()
+                    self._last_applied_ac_setpoint = None
 
         elif mode == HVACMode.COOL:
             await self._off_all_trvs()
             if self.has_ac:
-                await self._ac_set(HVACMode.COOL, self._target_temp)
+                # Calibrate the AC setpoint against the room sensor: most
+                # ACs have a biased internal sensor and would otherwise
+                # idle the compressor while the actual room is still off
+                # target.
+                sp = self._compute_ac_setpoint()
+                await self._ac_set(HVACMode.COOL, sp)
+                self._last_applied_ac_setpoint = sp
 
         elif mode == HVACMode.DRY:
             await self._off_all_trvs()
             if self.has_ac:
-                # Use the same target as the master entity so all devices stay in sync.
-                await self._ac_set(HVACMode.DRY, self._target_temp)
+                # DRY mode primarily targets humidity, but most ACs still
+                # honour a setpoint while in DRY. Calibrating it keeps the
+                # behaviour consistent with COOL.
+                sp = self._compute_ac_setpoint()
+                await self._ac_set(HVACMode.DRY, sp)
+                self._last_applied_ac_setpoint = sp
 
         elif mode == HVACMode.FAN_ONLY:
             await self._off_all_trvs()
             if self.has_ac:
                 await self._ac_fan_only()
+                # FAN_ONLY has no temperature concept on most ACs.
+                self._last_applied_ac_setpoint = None
 
     # ------------------------------------------------------------------
     # State change handling
@@ -530,37 +632,104 @@ class RoomClimateCoordinator:
 
         if entity_id == self.window_sensor:
             self._handle_window_change(new_state)
-        elif entity_id == self.ac_entity:
-            # AC state changes (from our own commands or external changes) only update
-            # the master entity state — they must NOT trigger TRV recalibration.
+            return
+
+        if entity_id == self.ac_entity:
+            # AC state changes (from our own commands or external changes)
+            # MUST NOT trigger recalibration — that would create a feedback
+            # loop (AC sensor change → new offset → new setpoint → AC reacts
+            # → AC sensor change). Just refresh the entity views.
             self._notify_entities()
+            return
+
+        # External room sensor / TRV state changes are the legitimate
+        # signals that drive recalibration: the room temperature evolved
+        # and either the TRV (HEAT) or the AC (COOL/DRY/HEAT+boost) needs
+        # its setpoint biased differently.
+        if self._needs_recalibration():
+            # _async_recalibrate notifies entities itself once the new
+            # setpoints have been applied — no immediate notify here,
+            # otherwise dependent sensors would report stale values for
+            # one tick.
+            self.hass.async_create_task(self._async_recalibrate())
         else:
-            if (
-                self._hvac_mode == HVACMode.HEAT
-                and not self._window_blocked
-            ):
-                self.hass.async_create_task(self._async_recalibrate())
             self._notify_entities()
 
-    async def _async_recalibrate(self) -> None:
-        """Recalculate setpoints on sensor changes. Auto-turn-off boost when target reached."""
+    def _needs_recalibration(self) -> bool:
+        """Whether the current state benefits from sensor-driven recalibration.
+
+        - HEAT (with or without boost): TRVs always; AC during boost.
+        - COOL / DRY: AC tracks calibrated setpoint.
+        - FAN_ONLY / OFF / window-blocked: nothing to recalibrate.
+        """
+        if self._window_blocked:
+            return False
         if self._hvac_mode == HVACMode.HEAT:
-            if self._boost_active:
-                current = self.current_temp
-                if current is not None and current >= self._target_temp:
-                    self._boost_active = False
-                    self._last_applied_setpoints.clear()
-                    await self._async_apply()
-                    self._notify_entities()
-                    _LOGGER.debug("%s: boost auto-off — target %.1f °C reached", self.name, self._target_temp)
-                    return
-                return
+            return True
+        if self._hvac_mode in (HVACMode.COOL, HVACMode.DRY) and self.has_ac:
+            return True
+        return False
+
+    async def _async_recalibrate(self) -> None:
+        """Recalculate TRV and AC setpoints on sensor changes.
+
+        Auto-cancels boost once the room reaches the master target.
+        """
+        mode = self._hvac_mode
+
+        if mode == HVACMode.HEAT and self._boost_active:
+            # Boost auto-off: the master target was reached, so even
+            # though boost was driving the valve fully open, we no
+            # longer need it. Falls through to a normal apply.
+            current = self.current_temp
+            if current is not None and current >= self._target_temp:
+                self._boost_active = False
+                self._reset_applied_state()
+                await self._async_apply()
+                _LOGGER.debug(
+                    "%s: boost auto-off — target %.1f °C reached",
+                    self.name,
+                    self._target_temp,
+                )
+            else:
+                # Still boosting: TRVs are already at max, but the AC
+                # still needs its setpoint recalibrated as the room warms.
+                await self._maybe_recalibrate_ac()
+
+        elif mode == HVACMode.HEAT:
             for trv in self.all_trvs:
                 sp = self._compute_tado_setpoint_for(trv)
                 if self._last_applied_setpoints.get(trv) != sp:
                     self._last_applied_setpoints[trv] = sp
                     await self._trv_heat_one(trv, sp)
-                    _LOGGER.debug("%s: recalibrated %s → %.1f", self.name, trv, sp)
+                    _LOGGER.debug(
+                        "%s: recalibrated %s → %.1f", self.name, trv, sp
+                    )
+
+        elif mode in (HVACMode.COOL, HVACMode.DRY) and self.has_ac:
+            await self._maybe_recalibrate_ac()
+
+        self._notify_entities()
+
+    async def _maybe_recalibrate_ac(self) -> None:
+        """Push a fresh calibrated setpoint to the AC if it has changed.
+
+        Uses ``_ac_set_temperature_only`` (no mode/fan re-set) because the
+        mode is already correct — only the calibrated temperature needs to
+        track room evolution. Dedup is by integer comparison since AC
+        setpoints are always rounded to whole degrees.
+        """
+        sp = self._compute_ac_setpoint()
+        if self._last_applied_ac_setpoint is not None and round(
+            self._last_applied_ac_setpoint
+        ) == round(sp):
+            return
+        self._last_applied_ac_setpoint = sp
+        await self._ac_set_temperature_only(sp)
+        _LOGGER.debug(
+            "%s: AC setpoint recalibrated → %d (room=%s, target=%.1f)",
+            self.name, round(sp), self.current_temp, self._target_temp,
+        )
 
     # ------------------------------------------------------------------
     # Window logic
@@ -615,7 +784,7 @@ class RoomClimateCoordinator:
         """Close delay expired — restore previous state."""
         self._window_close_task = None
         self._window_blocked = False
-        self._last_applied_setpoints.clear()
+        self._reset_applied_state()
         await self._async_apply()
         self._notify_entities()
         _LOGGER.debug("%s: window closed — HVAC restored", self.name)
@@ -653,8 +822,8 @@ class RoomClimateCoordinator:
                 {"entity_id": self.ac_entity, "hvac_mode": HVACMode.OFF},
             )
             _LOGGER.debug("%s: _ac_off OK", self.name)
-        except Exception as err:
-            _LOGGER.error("%s: _ac_off FAILED: %s", self.ac_entity, err)
+        except HomeAssistantError as err:
+            _LOGGER.warning("%s: _ac_off failed: %s", self.ac_entity, err)
 
     async def _ac_set(self, mode: str, temperature: float) -> None:
         temp_int = round(temperature)
@@ -678,14 +847,17 @@ class RoomClimateCoordinator:
                 {"entity_id": self.ac_entity, "hvac_mode": mode},
             )
             _LOGGER.debug("%s: _ac_set step 1 OK (set_hvac_mode=%s)", self.name, mode)
-        except Exception as err:
-            _LOGGER.error(
-                "%s: _ac_set step 1 FAILED (set_hvac_mode=%s): %s",
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "%s: _ac_set step 1 failed (set_hvac_mode=%s): %s",
                 self.name, mode, err,
             )
             return
 
-        # Let the Gree device commit the mode-change UDP push before sending temp.
+        # Gree devices need ~1s to commit a mode change over UDP before they
+        # accept a follow-up temperature command. The two short sleeps are
+        # tuned for that hardware quirk; do not remove without validating
+        # against the actual AC.
         await asyncio.sleep(1.0)
 
         # ── Step 2: set temperature ──
@@ -698,9 +870,9 @@ class RoomClimateCoordinator:
             _LOGGER.debug(
                 "%s: _ac_set step 2 OK (set_temperature=%d)", self.name, temp_int
             )
-        except Exception as err:
-            _LOGGER.error(
-                "%s: _ac_set step 2 FAILED (set_temperature=%d): %s",
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "%s: _ac_set step 2 failed (set_temperature=%d): %s",
                 self.name, temp_int, err,
             )
             return
@@ -723,6 +895,28 @@ class RoomClimateCoordinator:
             self.name, ac_mode_after, ac_temp_after,
         )
 
+    async def _ac_set_temperature_only(self, temperature: float) -> None:
+        """Update only the AC's target temperature (no mode/fan re-set).
+
+        Used by the recalibration loop while the AC stays in the same
+        mode. Skips the mode-change handshake (and the Gree-specific
+        sleeps) that ``_ac_set`` performs.
+        """
+        if not self.has_ac:
+            return
+        temp_int = round(temperature)
+        try:
+            await self.hass.services.async_call(
+                "climate",
+                "set_temperature",
+                {"entity_id": self.ac_entity, "temperature": temp_int},
+            )
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "%s: _ac_set_temperature_only failed: %s",
+                self.ac_entity, err,
+            )
+
     async def _ac_fan_only(self) -> None:
         _LOGGER.debug("%s: AC fan_only → %s", self.name, self.ac_entity)
         try:
@@ -732,9 +926,9 @@ class RoomClimateCoordinator:
                 {"entity_id": self.ac_entity, "hvac_mode": HVACMode.FAN_ONLY},
             )
             _LOGGER.debug("%s: _ac_fan_only set_hvac_mode OK", self.name)
-        except Exception as err:
-            _LOGGER.error(
-                "%s: _ac_fan_only set_hvac_mode FAILED: %s", self.name, err
+        except HomeAssistantError as err:
+            _LOGGER.warning(
+                "%s: _ac_fan_only set_hvac_mode failed: %s", self.name, err
             )
             return
         await asyncio.sleep(1.0)

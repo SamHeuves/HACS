@@ -78,26 +78,45 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             "name": entry.title,
             "manufacturer": "Room Climate",
             "model": "Virtual Climate Controller",
-            "sw_version": "1.1.0",
+            "sw_version": "1.3.0",
         }
 
     async def async_added_to_hass(self) -> None:
-        """Restore last state and register with coordinator."""
+        """Restore last state and register with coordinator.
+
+        Validates the restored HVAC mode against the *current* hvac_modes
+        list — otherwise a previously-saved mode (e.g. ``cool`` after the
+        user removed their AC via options) would put the entity into an
+        unselectable state. Falls back to OFF when invalid or missing.
+        """
         self._coordinator.register_climate_entity(self)
 
+        valid_modes = set(self.hvac_modes)
         last_state = await self.async_get_last_state()
+
         if last_state and last_state.state not in (
             "unknown", "unavailable", None
         ):
-            hvac_mode = last_state.state
-            target_temp = float(
-                last_state.attributes.get("temperature", DEFAULT_TARGET_TEMP)
-            )
-            boost = last_state.attributes.get("boost_active", False)
+            try:
+                hvac_mode = HVACMode(last_state.state)
+            except ValueError:
+                hvac_mode = HVACMode.OFF
+            if hvac_mode not in valid_modes:
+                hvac_mode = HVACMode.OFF
+
+            try:
+                target_temp = float(
+                    last_state.attributes.get("temperature", DEFAULT_TARGET_TEMP)
+                )
+            except (TypeError, ValueError):
+                target_temp = DEFAULT_TARGET_TEMP
+
+            boost = bool(last_state.attributes.get("boost_active", False))
             preset = last_state.attributes.get("preset_mode")
             if preset not in PRESET_MODES:
                 preset = None
             fan = last_state.attributes.get("fan_mode", FAN_AUTO)
+
             self._coordinator.restore_state(
                 hvac_mode=hvac_mode,
                 target_temp=target_temp,
@@ -106,9 +125,12 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
                 fan_mode=fan,
             )
             _LOGGER.debug(
-                "%s: restored state hvac=%s temp=%.1f preset=%s fan=%s",
-                self._coordinator.name, hvac_mode, target_temp, preset, fan,
+                "%s: restored state hvac=%s temp=%.1f preset=%s fan=%s boost=%s",
+                self._coordinator.name, hvac_mode, target_temp, preset, fan, boost,
             )
+            # Push the restored state to the physical devices so they don't
+            # drift out of sync until the next sensor update.
+            await self._coordinator.async_apply_after_restore()
         else:
             await self._coordinator.async_set_hvac_mode(HVACMode.OFF)
 
@@ -241,8 +263,25 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             "comfort_temp": self._coordinator.comfort_config,
             "eco_temp": self._coordinator.eco_config,
         }
+        # Optional humidity, when we can derive it from a humidity sensor or
+        # from the temp sensor's humidity attribute. Cards use this as
+        # current_humidity.
+        humidity = self._coordinator.current_humidity
+        if humidity is not None:
+            attrs["current_humidity"] = humidity
         if len(self._coordinator.all_trvs) > 1:
             attrs["trv_count"] = len(self._coordinator.all_trvs)
+            # Per-TRV setpoints help debugging multi-radiator rooms; only
+            # surface them when there's actually more than one TRV.
+            setpoints = self._coordinator.last_applied_setpoints
+            if setpoints:
+                attrs["trv_setpoints"] = setpoints
+        # AC's calibrated setpoint (after offset bias) — exposed when set
+        # so the user can see what the integration is actually telling
+        # the AC vs the master target.
+        ac_sp = self._coordinator.last_applied_ac_setpoint
+        if ac_sp is not None:
+            attrs["ac_setpoint"] = ac_sp
         return attrs
 
     # ------------------------------------------------------------------

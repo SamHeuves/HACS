@@ -17,6 +17,7 @@ from .const import (
     CONF_CALIBRATION_MODE,
     CONF_COMFORT_TEMP,
     CONF_ECO_TEMP,
+    CONF_HUMIDITY_SENSOR,
     CONF_TADO_ENTITY,
     CONF_TEMP_SENSOR,
     CONF_WINDOW_CLOSE_DELAY,
@@ -60,7 +61,7 @@ class RoomClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=schema, errors=errors
         )
 
-    # Step 2: Optional AC, temp sensor, additional TRVs
+    # Step 2: Optional AC, temp sensor, humidity sensor, additional TRVs
     async def async_step_optional_devices(self, user_input=None):
         if user_input is not None:
             self._data.update(user_input)
@@ -74,6 +75,11 @@ class RoomClimateConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_TEMP_SENSOR): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         device_class=SensorDeviceClass.TEMPERATURE
+                    )
+                ),
+                vol.Optional(CONF_HUMIDITY_SENSOR): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        device_class=SensorDeviceClass.HUMIDITY
                     )
                 ),
                 vol.Optional(CONF_ADDITIONAL_TRVS): selector.EntitySelector(
@@ -202,6 +208,9 @@ class RoomClimateOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             self._data[CONF_AC_ENTITY] = user_input.get(CONF_AC_ENTITY)
             self._data[CONF_TEMP_SENSOR] = user_input.get(CONF_TEMP_SENSOR)
+            self._data[CONF_HUMIDITY_SENSOR] = user_input.get(
+                CONF_HUMIDITY_SENSOR
+            )
             self._data[CONF_ADDITIONAL_TRVS] = (
                 user_input.get(CONF_ADDITIONAL_TRVS) or []
             )
@@ -225,6 +234,16 @@ class RoomClimateOptionsFlow(config_entries.OptionsFlow):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         device_class=SensorDeviceClass.TEMPERATURE
+                    )
+                ),
+                vol.Optional(
+                    CONF_HUMIDITY_SENSOR,
+                    description={
+                        "suggested_value": self._data.get(CONF_HUMIDITY_SENSOR)
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        device_class=SensorDeviceClass.HUMIDITY
                     )
                 ),
                 vol.Optional(

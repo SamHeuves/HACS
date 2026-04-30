@@ -7,9 +7,11 @@ alwaysApply: true
 
 ## Project Overview
 
-Home Assistant custom integration: virtual master climate entity per room.
-Coordinates one or more TRVs + optional AC with offset calibration, presets,
-fan control, auto heat/cool, window detection, and diagnostics.
+Home Assistant custom integration: a single virtual master climate entity per
+room that coordinates one or more TRVs and an optional AC. Features: per-TRV
+offset calibration against an external sensor, two fixed presets
+(comfort / eco), fan control, a boost service, window detection with
+configurable open/close debounce, and HA diagnostics.
 
 Integration files: `custom_components/room_climate/`
 
@@ -20,42 +22,131 @@ Integration files: `custom_components/room_climate/`
 | `__init__.py` | `RoomClimateCoordinator` — central state machine, mode routing, device calls |
 | `climate.py` | `RoomClimateMaster` — ClimateEntity + RestoreEntity, presets, fan mode, hvac_action |
 | `binary_sensor.py` | Window-blocked binary sensor |
-| `sensor.py` | Calibration offset + TRV setpoint sensor entities |
+| `sensor.py` | Calibration offset + primary TRV setpoint sensor entities |
 | `diagnostics.py` | Diagnostic data export for HA diagnostics panel |
 | `config_flow.py` | Multi-step ConfigFlow + OptionsFlow |
 | `const.py` | All constants — no mode strings (use HVACMode enum) |
-| `services.yaml` | boost enable/disable service definitions |
+| `services.yaml` | enable / disable / toggle boost services |
 | `strings.json` + `translations/en.json` | Must stay in sync |
-| `manifest.json` | `iot_class: calculated`, version tracking |
+| `manifest.json` | `iot_class: local_push`, version tracking |
+
+## Supported HVAC modes
+
+- Always: `OFF`, `HEAT`
+- When an AC entity is configured: also `COOL`, `DRY`, `FAN_ONLY`
+- No `AUTO` / `HEAT_COOL` mode — auto switching was deliberately removed.
+  If reintroduced, `hvac_modes` and `_async_apply` must be updated together.
+
+## Presets
+
+- `PRESET_MODES = ["comfort", "eco"]` — boost is **not** a preset, it is a
+  separate service (`enable_boost` / `disable_boost` / `toggle_boost`).
+- Selecting a preset retargets `_target_temp` from `_comfort_config` /
+  `_eco_config`. Clearing the preset (preset is None) leaves the current
+  target alone.
+- `async_set_temperature` clears any active preset and any active boost.
+- `async_set_boost(True)` clears the active preset to keep the state
+  internally consistent.
+
+## Boost
+
+- TRV setpoint = each TRV's own `max_temp` attribute (fallback
+  `BOOST_FALLBACK_SETPOINT = 30°C` if unavailable) so the valve opens fully.
+- AC, when present, is set to `HEAT` at the *calibrated* AC setpoint
+  (see "AC offset calibration" below) — never the raw master target.
+- Boost auto-cancels when `current_temp >= _target_temp`.
+
+## AC offset calibration
+
+ACs' internal sensors almost always disagree with a separate room sensor
+(placement, return-air heat, sensor bias). Without compensation the AC's
+own thermostat shuts the compressor off when *its* sensor reads target
+while the actual room is still off-target — the "didn't stop when it
+reached the set temperature" symptom.
+
+- `_compute_ac_setpoint()` mirrors `_compute_tado_setpoint_for()`:
+  `setpoint = ac.current_temperature + (target - room_sensor)`.
+- Applied in COOL, DRY, and HEAT+boost (all modes where the AC is the
+  device responsible for temperature). Not applied in HEAT (no boost) /
+  FAN_ONLY / OFF — AC isn't running.
+- `_async_recalibrate` ALSO recalibrates the AC, not just TRVs.
+  `_handle_state_change` triggers recalibrate for HEAT, COOL, and DRY
+  modes via `_needs_recalibration()`.
+- Aggressive multiplier is intentionally NOT applied to AC — ACs already
+  react aggressively and amplifying the offset can drive them into
+  corner regions.
+- AC state changes never trigger recalibration (would create a feedback
+  loop: AC sensor change → new offset → setpoint change → AC reacts).
+- `_last_applied_ac_setpoint` is the AC equivalent of
+  `_last_applied_setpoints`; both are reset together via
+  `_reset_applied_state()` whenever a fresh apply is needed.
+- Cheap-path recalibration uses `_ac_set_temperature_only` (no mode or
+  fan re-set, no Gree sleeps) since the mode is already correct.
 
 ## Key Patterns
 
-- Config: `{**entry.data, **entry.options}` — options flow changes apply on reload
-- Multi-TRV: `all_trvs = [primary] + additional_trvs`, per-TRV calibration
-- Dedup: `_last_applied_setpoints` dict prevents redundant service calls
-- Recalibration: `_handle_state_change` → `_async_recalibrate()` on sensor updates
-- Auto mode: deadband ±0.5 °C around target, `_auto_submode` tracks heating/cooling
-- Presets: `_comfort_temp` stores base temp; presets derive `_target_temp` from it
-- Fan mode: read from AC entity's `fan_modes` attribute, apply via `set_fan_mode`
-- Error handling: all service calls wrapped in `try/except HomeAssistantError`
-- Window: `call_later` timers with configurable open/close delays
+- Config: `{**entry.data, **entry.options}` — options-flow changes apply on
+  reload (`async_update_listener`).
+- Multi-TRV: `all_trvs = [primary] + additional_trvs`, primary deduped out
+  of additional list. Calibration is computed per TRV using each TRV's
+  reported `current_temperature` against the room sensor.
+- Dedup: `_last_applied_setpoints` dict (per TRV) prevents redundant
+  `set_temperature` service calls.
+- Recalibration: `_handle_state_change` schedules `_async_recalibrate()` on
+  any non-window, non-AC entity change while in HEAT mode. The recalibrate
+  task itself calls `_notify_entities()` after applying setpoints, so
+  `_handle_state_change` must NOT call `_notify_entities()` on the same
+  branch (avoids one-tick stale data on the TRV setpoint sensor).
+- Window: `call_later` timers with configurable open/close delays. Initial
+  window state is sampled in `async_setup` so an already-open window is
+  honoured on startup.
+- State restore: `restore_state` only updates coordinator state; the
+  climate entity then calls `async_apply_after_restore()` so physical
+  devices match the restored state without waiting for the next sensor
+  update. Restored `hvac_mode` is validated against the current
+  `hvac_modes` list — invalid / removed modes fall back to OFF.
+- Error handling: all `hass.services.async_call(...)` wrapped in
+  `try/except HomeAssistantError` (warning-level log, never error).
+
+## Service registration
+
+- Services are registered exclusively via
+  `entity_platform.async_register_entity_service` in `climate.py`. There is
+  no global `hass.services.async_register` for boost in `__init__.py` —
+  having both used to cause duplicate handlers and was removed.
 
 ## Coding Rules
 
 - `HVACMode` enum — never raw strings
-- All UI text in `strings.json` / `en.json` — never in Python
+- All UI text in `strings.json` / `en.json` — never in Python; both files
+  must stay in sync (every key in one is in the other)
 - `translation_key` for select selector options
-- Options flow: `self.config_entry` (no constructor parameter)
+- Options flow: `self.config_entry` (no constructor parameter); every
+  optional entity offered in the initial config flow must also be
+  reachable in the options flow (no setup-only fields)
 - Optional fields: `user_input.get(KEY)` so clearing sets `None`
 - New constants → `const.py`; new services → `services.yaml`
 
 ## Testing Checklist
 
 - Per-TRV calibration with 1, 2, 3 TRVs
-- Auto mode: heat→cool→idle transitions with deadband
-- All four presets: comfort/eco/away/boost + manual temp clears preset
+- Boost: TRV setpoints jump to each TRV's max_temp; auto-off when target reached
+- Both presets: comfort/eco; manual temp clears the preset; boost clears the preset
 - Fan mode passthrough to AC
+- AC offset calibration:
+  - In COOL mode with AC sensor biased warm vs room sensor, AC setpoint
+    is written *below* master target so the AC keeps cooling toward the
+    real room temperature, then idles when room reaches target
+  - On every external sensor update, `_async_recalibrate` updates the AC
+    setpoint via `_ac_set_temperature_only` (no mode re-set)
+  - With no external temp_sensor configured, AC receives raw target
+    (no calibration possible — graceful fallback)
+  - AC state changes never trigger recalibration (no feedback loop)
 - Window debounce: rapid open/close sequences
-- Options flow: add/remove optional entities
-- State restoration after HA restart (all fields)
-- Diagnostics download
+- Window already open at HA startup → master entity reports OFF until close
+- Options flow: add/remove every optional entity (AC, temp, humidity, window, additional TRVs)
+- State restoration after HA restart, including:
+  - mode no longer valid (e.g. saved `cool` after AC removed) → falls back to OFF
+  - target_temp / preset / boost / fan_mode all restored
+  - physical devices reach the restored state without waiting on a sensor tick
+- Diagnostics download (includes humidity sensor, per-TRV setpoints, AC setpoint)

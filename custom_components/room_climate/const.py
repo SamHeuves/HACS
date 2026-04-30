@@ -6,6 +6,7 @@ DOMAIN = "room_climate"
 CONF_TADO_ENTITY = "tado_entity"
 CONF_AC_ENTITY = "ac_entity"
 CONF_TEMP_SENSOR = "temp_sensor"
+CONF_HUMIDITY_SENSOR = "humidity_sensor"
 CONF_WINDOW_SENSOR = "window_sensor"
 CONF_CALIBRATION_MODE = "calibration_mode"
 CONF_WINDOW_OPEN_DELAY = "window_open_delay"
@@ -28,8 +29,10 @@ DEFAULT_MAX_TEMP = 35.0
 DEFAULT_TEMP_STEP = 0.5
 DEFAULT_TARGET_TEMP = 20.0
 
-# Boost: drives TRV setpoint to max to open valve fully
-BOOST_SETPOINT = 25.0
+# Boost: drives every TRV's setpoint to its own ``max_temp`` attribute so the
+# valve is forced fully open. ``BOOST_FALLBACK_SETPOINT`` is only used when a
+# TRV does not report a max_temp (e.g. unavailable on startup).
+BOOST_FALLBACK_SETPOINT = 30.0
 
 # Dry mode AC setpoint
 DRY_MODE_TEMP = 16.0

@@ -24,6 +24,7 @@ async def async_get_config_entry_diagnostics(
             "comfort_temp": coordinator.comfort_config,
             "eco_temp": coordinator.eco_config,
             "current_temp": coordinator.current_temp,
+            "current_humidity": coordinator.current_humidity,
             "preset_mode": coordinator.preset_mode,
             "fan_mode": coordinator.fan_mode,
             "boost_active": coordinator.boost_active,
@@ -31,11 +32,13 @@ async def async_get_config_entry_diagnostics(
             "calibration_mode": coordinator.calibration_mode,
             "calibration_offset": coordinator.calibration_offset,
             "last_applied_setpoints": coordinator.last_applied_setpoints,
+            "last_applied_ac_setpoint": coordinator.last_applied_ac_setpoint,
         },
         "devices": {
             "all_trvs": coordinator.all_trvs,
             "ac_entity": coordinator.ac_entity,
             "temp_sensor": coordinator.temp_sensor,
+            "humidity_sensor": coordinator.humidity_sensor,
             "window_sensor": coordinator.window_sensor,
         },
     }
