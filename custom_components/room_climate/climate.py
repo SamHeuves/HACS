@@ -63,6 +63,7 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
 
     _attr_has_entity_name = True
     _attr_name = None
+    _attr_translation_key = "master"
     _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_min_temp = DEFAULT_MIN_TEMP
     _attr_max_temp = DEFAULT_MAX_TEMP

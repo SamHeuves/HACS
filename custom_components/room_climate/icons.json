@@ -1,0 +1,23 @@
+{
+  "entity": {
+    "climate": {
+      "master": {
+        "state_attributes": {
+          "fan_mode": {
+            "default": "mdi:fan",
+            "state": {
+              "auto": "mdi:fan-auto",
+              "low": "mdi:fan-chevron-down",
+              "medium_low": "mdi:fan-minus",
+              "medium": "mdi:fan",
+              "medium_high": "mdi:fan-plus",
+              "high": "mdi:fan-chevron-up",
+              "turbo": "mdi:weather-windy",
+              "quiet": "mdi:sleep"
+            }
+          }
+        }
+      }
+    }
+  }
+}

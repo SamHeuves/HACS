@@ -93,5 +93,31 @@
         "aggressive": "Aggressive — amplified offset (opens valve wider)"
       }
     }
+  },
+  "entity": {
+    "climate": {
+      "master": {
+        "state_attributes": {
+          "fan_mode": {
+            "state": {
+              "auto": "Auto",
+              "low": "Low",
+              "medium_low": "Medium-Low",
+              "medium": "Medium",
+              "medium_high": "Medium-High",
+              "high": "High",
+              "turbo": "Turbo",
+              "quiet": "Quiet"
+            }
+          },
+          "preset_mode": {
+            "state": {
+              "comfort": "Comfort",
+              "eco": "Eco"
+            }
+          }
+        }
+      }
+    }
   }
 }
