@@ -10,6 +10,7 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
+from homeassistant.components.climate.const import PRESET_NONE
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -78,7 +79,7 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
             "name": entry.title,
             "manufacturer": "Room Climate",
             "model": "Virtual Climate Controller",
-            "sw_version": "1.3.0",
+            "sw_version": "1.3.1",
         }
 
     async def async_added_to_hass(self) -> None:
@@ -296,7 +297,9 @@ class RoomClimateMaster(ClimateEntity, RestoreEntity):
         if temp is not None:
             await self._coordinator.async_set_temperature(float(temp))
 
-    async def async_set_preset_mode(self, preset_mode: str) -> None:
+    async def async_set_preset_mode(self, preset_mode: str | None) -> None:
+        if preset_mode == PRESET_NONE:
+            preset_mode = None
         await self._coordinator.async_set_preset_mode(preset_mode)
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
